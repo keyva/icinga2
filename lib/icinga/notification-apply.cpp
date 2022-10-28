@@ -65,9 +65,7 @@ bool Notification::EvaluateApplyRule(const Checkable::Ptr& checkable, const Appl
 {
 	DebugInfo di = rule.GetDebugInfo();
 
-	std::ostringstream msgbuf;
-	msgbuf << "Evaluating 'apply' rule (" << di << ")";
-	CONTEXT(msgbuf.str());
+	CONTEXT("Evaluating 'apply' rule (" << di << ")");
 
 	ScriptFrame frame (false);
 

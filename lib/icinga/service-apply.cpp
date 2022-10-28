@@ -59,9 +59,7 @@ bool Service::EvaluateApplyRule(const Host::Ptr& host, const ApplyRule& rule, bo
 {
 	DebugInfo di = rule.GetDebugInfo();
 
-	std::ostringstream msgbuf;
-	msgbuf << "Evaluating 'apply' rule (" << di << ")";
-	CONTEXT(msgbuf.str());
+	CONTEXT("Evaluating 'apply' rule (" << di << ")");
 
 	ScriptFrame frame (false);
 
