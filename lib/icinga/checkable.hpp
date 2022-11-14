@@ -207,7 +207,7 @@ protected:
 	void OnConfigLoaded() override;
 	void OnAllConfigLoaded() override;
 
-	virtual Dictionary::Ptr MakeLocalsForApply() = 0;
+	virtual Dictionary::Ptr MakeLocalsForApply();
 
 private:
 	Dictionary::Ptr m_FrozenLocalsForApply;
