@@ -54,6 +54,8 @@ public:
 	virtual bool ValidateName(const String& type, const String& name) const = 0;
 };
 
+class Namespace;
+
 class Type : public Object
 {
 public:
@@ -91,6 +93,8 @@ public:
 
 	typedef std::function<void (const Object::Ptr&, const Value&)> AttributeHandler;
 	virtual void RegisterAttributeHandler(int fieldId, const AttributeHandler& callback);
+
+	static intrusive_ptr<Namespace> m_Namespace;
 
 protected:
 	virtual ObjectFactory GetFactory() const = 0;
