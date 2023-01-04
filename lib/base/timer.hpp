@@ -5,6 +5,7 @@
 
 #include "base/i2-base.hpp"
 #include "base/object.hpp"
+#include "base/shared.hpp"
 #include <boost/signals2.hpp>
 
 namespace icinga {
@@ -40,6 +41,7 @@ public:
 	double GetNext() const;
 
 	boost::signals2::signal<void(const Timer * const&)> OnTimerExpired;
+	Shared<boost::signals2::signal<void()>>::LazyPtr OnTimerExpiredDetached;
 
 private:
 	double m_Interval{0}; /**< The interval of the timer. */
