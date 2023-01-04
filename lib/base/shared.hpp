@@ -42,6 +42,7 @@ class Shared : public T
 
 public:
 	typedef boost::intrusive_ptr<Shared> Ptr;
+	class LazyPtr;
 
 	/**
 	 * Like std::make_shared, but for this class.
@@ -94,6 +95,43 @@ public:
 
 private:
 	Atomic<uint_fast64_t> m_References;
+};
+
+/**
+ * Seamless wrapper for Shared<T>::Ptr which auto-creates the referenced object.
+ *
+ * @ingroup base
+ */
+template<class T>
+class Shared<T>::LazyPtr : public boost::intrusive_ptr<Shared<T>>
+{
+public:
+	using boost::intrusive_ptr<Shared<T>>::intrusive_ptr;
+
+	Shared<T>& operator*() const BOOST_SP_NOEXCEPT_WITH_ASSERT = delete;
+	Shared<T>* operator->() const BOOST_SP_NOEXCEPT_WITH_ASSERT = delete;
+
+	inline Shared<T>& operator*()
+	{
+		return *GetOrCreateObject();
+	}
+
+	inline Shared<T>* operator->()
+	{
+		return GetOrCreateObject();
+	}
+
+private:
+	auto GetOrCreateObject()
+	{
+		Shared<T>::Ptr& parent (*this);
+
+		if (!parent.get()) {
+			parent.reset(new Shared<T>());
+		}
+
+		return parent.get();
+	}
 };
 
 }
