@@ -37,10 +37,7 @@ class ThreadPool
 public:
 	typedef std::function<void ()> WorkFunction;
 
-	ThreadPool();
 	~ThreadPool();
-
-	void Start();
 	void Stop();
 
 	/**
@@ -50,30 +47,38 @@ public:
 	 * @returns true if the item was queued, false otherwise.
 	 */
 	template<class T>
-	bool Post(T callback, SchedulerPolicy)
+	void Post(T callback, SchedulerPolicy)
 	{
-		boost::shared_lock<decltype(m_Mutex)> lock (m_Mutex);
+		for (;;) {
+			{
+				boost::shared_lock<decltype(m_Mutex)> lock (m_Mutex);
 
-		if (m_Pool) {
-			m_Pending.fetch_add(1);
+				if (m_Pool) {
+					m_Pending.fetch_add(1);
 
-			boost::asio::post(*m_Pool, [this, callback]() {
-				m_Pending.fetch_sub(1);
+					boost::asio::post(*m_Pool, [this, callback]() {
+						m_Pending.fetch_sub(1);
 
-				try {
-					callback();
-				} catch (const std::exception& ex) {
-					Log(LogCritical, "ThreadPool")
-						<< "Exception thrown in event handler:\n"
-						<< DiagnosticInformation(ex);
-				} catch (...) {
-					Log(LogCritical, "ThreadPool", "Exception of unknown type thrown in event handler.");
+						try {
+							callback();
+						} catch (const std::exception& ex) {
+							Log(LogCritical, "ThreadPool")
+								<< "Exception thrown in event handler:\n"
+								<< DiagnosticInformation(ex);
+						} catch (...) {
+							Log(LogCritical, "ThreadPool", "Exception of unknown type thrown in event handler.");
+						}
+					});
+
+					break;
 				}
-			});
+			}
 
-			return true;
-		} else {
-			return false;
+			boost::unique_lock<decltype(m_Mutex)> lock (m_Mutex);
+
+			if (!m_Pool) {
+				m_Pool = decltype(m_Pool)(new boost::asio::thread_pool(Configuration::Concurrency * 2u));
+			}
 		}
 	}
 
@@ -90,7 +95,7 @@ public:
 private:
 	boost::shared_mutex m_Mutex;
 	std::unique_ptr<boost::asio::thread_pool> m_Pool;
-	Atomic<uint_fast64_t> m_Pending;
+	Atomic<uint_fast64_t> m_Pending {0};
 };
 
 }
