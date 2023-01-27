@@ -3,6 +3,59 @@
 For an uptodate overview of all integrations and modules,
 please visit [https://icinga.com/products/](https://icinga.com/products/).
 
+## Syntax Highlighting <a id="configuration-syntax-highlighting"></a>
+
+Icinga 2 provides configuration examples for syntax highlighting using the `vim` and `nano` editors.
+
+### Using Vim <a id="configuration-syntax-highlighting-vim"></a>
+
+Install the package `vim-icinga2` with your distribution's package manager.
+
+Ensure that syntax highlighting is enabled e.g. by editing the user's `vimrc`
+configuration file:
+
+```
+# vim ~/.vimrc
+syntax on
+```
+
+Test it:
+
+```bash
+vim /etc/icinga2/conf.d/templates.conf
+```
+
+![Vim with syntax highlighting](images/addons/vim-syntax.png "Vim with Icinga 2 syntax highlighting")
+
+
+### Using Nano <a id="configuration-syntax-highlighting-nano"></a>
+
+Install the package `nano-icinga2` with your distribution's package manager.
+
+**Note:** On Debian, Ubuntu and Raspbian, the syntax files are installed with the `icinga2-common` package already.
+
+Copy the `/etc/nanorc` sample file to your home directory.
+
+```bash
+cp /etc/nanorc ~/.nanorc
+```
+
+Include the `icinga2.nanorc` file.
+
+```
+$ vim ~/.nanorc
+
+## Icinga 2
+include "/usr/share/nano/icinga2.nanorc"
+```
+
+Test it:
+
+```bash
+nano /etc/icinga2/conf.d/templates.conf
+```
+
+![Nano with syntax highlighting](images/addons/nano-syntax.png "Nano with Icinga 2 syntax highlighting")
 
 ## Icinga Reporting <a id="addons-reporting"></a>
 
@@ -40,8 +93,8 @@ You need to install Graphite first, then proceed with configuring it in Icinga 2
 Use the [GraphiteWriter](14-features.md#graphite-carbon-cache-writer) feature
 for sending real-time metrics from Icinga 2 to Graphite.
 
-```
-# icinga2 feature enable graphite
+```bash
+icinga2 feature enable graphite
 ```
 
 A popular alternative frontend for Graphite is for example [Grafana](https://grafana.org).
@@ -57,10 +110,17 @@ Integration in Icinga Web 2 is possible by installing the official [graphite mod
 It’s written in Go and has no external dependencies.
 
 Use the [InfluxdbWriter](14-features.md#influxdb-writer) feature
-for sending real-time metrics from Icinga 2 to InfluxDB.
+for sending real-time metrics from Icinga 2 to InfluxDB v1.
 
+```bash
+icinga2 feature enable influxdb
 ```
-# icinga2 feature enable influxdb
+
+Use the [Influxdb2Writer](14-features.md#influxdb-writer) feature
+for sending real-time metrics from Icinga 2 to InfluxDB v2.
+
+```bash
+icinga2 feature enable influxdb2
 ```
 
 A popular frontend for InfluxDB is for example [Grafana](https://grafana.org).
@@ -86,13 +146,13 @@ data files which Icinga 2 generates.
 
 Enable performance data writer in icinga 2
 
-```
-# icinga2 feature enable perfdata
+```bash
+icinga2 feature enable perfdata
 ```
 
 Configure npcd to use the performance data created by Icinga 2:
 
-```
+```bash
 vim /etc/pnp4nagios/npcd.cfg
 ```
 
@@ -196,5 +256,3 @@ Checkout these specific integrations:
 
 If you're looking for different config management integrations -- we're happy
 to add them upstream, so please get in touch with the [Icinga team](https://icinga.com/community/).
-
-

@@ -10,6 +10,7 @@
 #include "base/logger.hpp"
 #include "base/utility.hpp"
 #include <boost/algorithm/string/case_conv.hpp>
+#include <memory>
 
 using namespace icinga;
 
@@ -124,13 +125,27 @@ static void FilteredAddTarget(ScriptFrame& permissionFrame, Expression *permissi
 	}
 }
 
-void FilterUtility::CheckPermission(const ApiUser::Ptr& user, const String& permission, Expression **permissionFilter)
+/**
+ * Checks whether the given API user is granted the given permission
+ *
+ * When you desire an exception to be raised when the given user doesn't have the given permission,
+ * you need to use FilterUtility::CheckPermission().
+ *
+ * @param user ApiUser pointer to the user object you want to check the permission of
+ * @param permission The actual permission you want to check the user permission against
+ * @param permissionFilter Expression pointer that is used as an output buffer for all the filter expressions of the
+ *                         individual permissions of the given user to be evaluated. It's up to the caller to delete
+ *                         this pointer when it's not needed any more.
+ *
+ * @return bool
+ */
+bool FilterUtility::HasPermission(const ApiUser::Ptr& user, const String& permission, std::unique_ptr<Expression>* permissionFilter)
 {
 	if (permissionFilter)
 		*permissionFilter = nullptr;
 
 	if (permission.IsEmpty())
-		return;
+		return true;
 
 	bool foundPermission = false;
 	String requiredPermission = permission.ToLower();
@@ -162,9 +177,9 @@ void FilterUtility::CheckPermission(const ApiUser::Ptr& user, const String& perm
 				FunctionCallExpression *fexpr = new FunctionCallExpression(std::move(indexer), std::move(args));
 
 				if (!*permissionFilter)
-					*permissionFilter = fexpr;
+					permissionFilter->reset(fexpr);
 				else
-					*permissionFilter = new LogicalOrExpression(std::unique_ptr<Expression>(*permissionFilter), std::unique_ptr<Expression>(fexpr));
+					*permissionFilter = std::make_unique<LogicalOrExpression>(std::move(*permissionFilter), std::unique_ptr<Expression>(fexpr));
 			}
 		}
 	}
@@ -172,8 +187,15 @@ void FilterUtility::CheckPermission(const ApiUser::Ptr& user, const String& perm
 	if (!foundPermission) {
 		Log(LogWarning, "FilterUtility")
 			<< "Missing permission: " << requiredPermission;
+	}
 
-		BOOST_THROW_EXCEPTION(ScriptError("Missing permission: " + requiredPermission));
+	return foundPermission;
+}
+
+void FilterUtility::CheckPermission(const ApiUser::Ptr& user, const String& permission, std::unique_ptr<Expression>* permissionFilter)
+{
+	if (!HasPermission(user, permission, permissionFilter)) {
+		BOOST_THROW_EXCEPTION(ScriptError("Missing permission: " + permission.ToLower()));
 	}
 }
 
@@ -188,7 +210,7 @@ std::vector<Value> FilterUtility::GetFilterTargets(const QueryDescription& qd, c
 	else
 		provider = new ConfigObjectTargetProvider();
 
-	Expression *permissionFilter;
+	std::unique_ptr<Expression> permissionFilter;
 	CheckPermission(user, qd.Permission, &permissionFilter);
 
 	Namespace::Ptr permissionFrameNS = new Namespace();
@@ -205,7 +227,7 @@ std::vector<Value> FilterUtility::GetFilterTargets(const QueryDescription& qd, c
 			String name = HttpUtility::GetLastParameter(query, attr);
 			Object::Ptr target = provider->GetTargetByName(type, name);
 
-			if (!FilterUtility::EvaluateFilter(permissionFrame, permissionFilter, target, variableName))
+			if (!FilterUtility::EvaluateFilter(permissionFrame, permissionFilter.get(), target, variableName))
 				BOOST_THROW_EXCEPTION(ScriptError("Access denied to object '" + name + "' of type '" + type + "'"));
 
 			result.emplace_back(std::move(target));
@@ -221,7 +243,7 @@ std::vector<Value> FilterUtility::GetFilterTargets(const QueryDescription& qd, c
 				for (const String& name : names) {
 					Object::Ptr target = provider->GetTargetByName(type, name);
 
-					if (!FilterUtility::EvaluateFilter(permissionFrame, permissionFilter, target, variableName))
+					if (!FilterUtility::EvaluateFilter(permissionFrame, permissionFilter.get(), target, variableName))
 						BOOST_THROW_EXCEPTION(ScriptError("Access denied to object '" + name + "' of type '" + type + "'"));
 
 					result.emplace_back(std::move(target));
@@ -258,16 +280,16 @@ std::vector<Value> FilterUtility::GetFilterTargets(const QueryDescription& qd, c
 				}
 			}
 
-			provider->FindTargets(type, std::bind(&FilteredAddTarget,
-				std::ref(permissionFrame), permissionFilter,
-				std::ref(frame), &*ufilter, std::ref(result), variableName, _1));
+			provider->FindTargets(type, [&permissionFrame, &permissionFilter, &frame, &ufilter, &result, variableName](const Object::Ptr& target) {
+				FilteredAddTarget(permissionFrame, permissionFilter.get(), frame, &*ufilter, result, variableName, target);
+			});
 		} else {
 			/* Ensure to pass a nullptr as filter expression.
 			 * GCC 8.1.1 on F28 causes problems, see GH #6533.
 			 */
-			provider->FindTargets(type, std::bind(&FilteredAddTarget,
-				std::ref(permissionFrame), permissionFilter,
-				std::ref(frame), nullptr, std::ref(result), variableName, _1));
+			provider->FindTargets(type, [&permissionFrame, &permissionFilter, &frame, &result, variableName](const Object::Ptr& target) {
+				FilteredAddTarget(permissionFrame, permissionFilter.get(), frame, nullptr, result, variableName, target);
+			});
 		}
 	}
 

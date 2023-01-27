@@ -11,11 +11,13 @@ Icinga 2 supports three different types of logging:
 You can enable additional loggers using the `icinga2 feature enable`
 and `icinga2 feature disable` commands to configure loggers:
 
-Feature  | Description
----------|------------
-debuglog | Debug log (path: `/var/log/icinga2/debug.log`, severity: `debug` or higher)
-mainlog  | Main log (path: `/var/log/icinga2/icinga2.log`, severity: `information` or higher)
-syslog   | Syslog (severity: `warning` or higher)
+Feature         | Description
+----------------|------------
+debuglog        | Debug log (path: `/var/log/icinga2/debug.log`, severity: `debug` or higher)
+journald        | Systemd Journal (severity: `warning` or higher)
+mainlog         | Main log (path: `/var/log/icinga2/icinga2.log`, severity: `information` or higher)
+syslog          | Syslog (severity: `warning` or higher)
+windowseventlog | Windows Event Log (severity: `information` or higher)
 
 By default file the `mainlog` feature is enabled. When running Icinga 2
 on a terminal log messages with severity `information` or higher are
@@ -46,172 +48,23 @@ The REST API is documented [here](12-icinga2-api.md#icinga2-api) as a core featu
 
 ### Icinga DB <a id="core-backends-icingadb"></a>
 
-Icinga DB provides a new core backend and aims to replace the IDO backend
-output. It consists of different components:
+Icinga DB is a set of components for publishing, synchronizing and
+visualizing monitoring data in the Icinga ecosystem, consisting of:
 
-* Icinga 2 provides the `icingadb` feature which stores monitoring data in a memory database
-* The [IcingaDB service](https://github.com/icinga/icingadb) collects and synchronizes monitoring data into its backend
-* Icinga Web reads monitoring data from the new IcingaDB backend
+* Icinga 2 with its `icingadb` feature enabled,
+  responsible for publishing monitoring data to a Redis server, i.e. configuration and its runtime updates,  
+  check results, state changes, downtimes, acknowledgements, notifications, and other events such as flapping
+* The [Icinga DB daemon](https://icinga.com/docs/icinga-db),
+  which synchronizes the data between the Redis server and a database
+* And Icinga Web with the
+  [Icinga DB Web](https://icinga.com/docs/icinga-db-web) module enabled,
+  which connects to both Redis and the database to display and work with the most up-to-date data
 
-Requirements:
+![Icinga DB Architecture](images/icingadb/icingadb-architecture.png)
 
-* Local Redis instance
-* MySQL/MariaDB server with `icingadb` database, user and schema imports
-* Icinga 2's `icingadb` feature enabled
-* IcingaDB service requires Redis and MySQL/MariaDB server
-* Icinga Web module
-
-> TODO: Detailed instructions.
-
-```
-icinga2 feature enable icingadb
-```
-
-
-### IDO Database (DB IDO) <a id="db-ido"></a>
-
-The IDO (Icinga Data Output) feature for Icinga 2 takes care of exporting all
-configuration and status information into a database. The IDO database is used
-by Icinga Web 2 as data backend.
-
-Details on the installation can be found in the [Configuring DB IDO](02-installation.md#configuring-db-ido-mysql)
-chapter. Details on the configuration can be found in the
-[IdoMysqlConnection](09-object-types.md#objecttype-idomysqlconnection) and
-[IdoPgsqlConnection](09-object-types.md#objecttype-idopgsqlconnection)
-object configuration documentation.
-
-#### DB IDO Health <a id="db-ido-health"></a>
-
-If the monitoring health indicator is critical in Icinga Web 2,
-you can use the following queries to manually check whether Icinga 2
-is actually updating the IDO database.
-
-Icinga 2 writes its current status to the `icinga_programstatus` table
-every 10 seconds. The query below checks 60 seconds into the past which is a reasonable
-amount of time -- adjust it for your requirements. If the condition is not met,
-the query returns an empty result.
-
-> **Tip**
->
-> Use [check plugins](05-service-monitoring.md#service-monitoring-plugins) to monitor the backend.
-
-Replace the `default` string with your instance name if different.
-
-Example for MySQL:
-
-```
-# mysql -u root -p icinga -e "SELECT status_update_time FROM icinga_programstatus ps
-  JOIN icinga_instances i ON ps.instance_id=i.instance_id
-  WHERE (UNIX_TIMESTAMP(ps.status_update_time) > UNIX_TIMESTAMP(NOW())-60)
-  AND i.instance_name='default';"
-
-+---------------------+
-| status_update_time  |
-+---------------------+
-| 2014-05-29 14:29:56 |
-+---------------------+
-```
-
-Example for PostgreSQL:
-
-```
-# export PGPASSWORD=icinga; psql -U icinga -d icinga -c "SELECT ps.status_update_time FROM icinga_programstatus AS ps
-  JOIN icinga_instances AS i ON ps.instance_id=i.instance_id
-  WHERE ((SELECT extract(epoch from status_update_time) FROM icinga_programstatus) > (SELECT extract(epoch from now())-60))
-  AND i.instance_name='default'";
-
-status_update_time
-------------------------
- 2014-05-29 15:11:38+02
-(1 Zeile)
-```
-
-A detailed list on the available table attributes can be found in the [DB IDO Schema documentation](24-appendix.md#schema-db-ido).
-
-#### DB IDO in Cluster HA Zones <a id="db-ido-cluster-ha"></a>
-
-The DB IDO feature supports [High Availability](06-distributed-monitoring.md#distributed-monitoring-high-availability-db-ido) in
-the Icinga 2 cluster.
-
-By default, both endpoints in a zone calculate the
-endpoint which activates the feature, the other endpoint
-automatically pauses it. If the cluster connection
-breaks at some point, the paused IDO feature automatically
-does a failover.
-
-You can disable this behaviour by setting `enable_ha = false`
-in both feature configuration files.
-
-#### DB IDO Cleanup <a id="db-ido-cleanup"></a>
-
-Objects get deactivated when they are deleted from the configuration.
-This is visible with the `is_active` column in the `icinga_objects` table.
-Therefore all queries need to join this table and add `WHERE is_active=1` as
-condition. Deleted objects preserve their history table entries for later SLA
-reporting.
-
-Historical data isn't purged by default. You can enable the least
-kept data age inside the `cleanup` configuration attribute for the
-IDO features [IdoMysqlConnection](09-object-types.md#objecttype-idomysqlconnection)
-and [IdoPgsqlConnection](09-object-types.md#objecttype-idopgsqlconnection).
-
-Example if you prefer to keep notification history for 30 days:
-
-```
-  cleanup = {
-     notifications_age = 30d
-     contactnotifications_age = 30d
-  }
-```
-
-The historical tables are populated depending on the data `categories` specified.
-Some tables are empty by default.
-
-#### DB IDO Tuning <a id="db-ido-tuning"></a>
-
-As with any application database, there are ways to optimize and tune the database performance.
-
-General tips for performance tuning:
-
-* [MariaDB KB](https://mariadb.com/kb/en/library/optimization-and-tuning/)
-* [PostgreSQL Wiki](https://wiki.postgresql.org/wiki/Performance_Optimization)
-
-Re-creation of indexes, changed column values, etc. will increase the database size. Ensure to
-add health checks for this, and monitor the trend in your Grafana dashboards.
-
-In order to optimize the tables, there are different approaches. Always keep in mind to have a
-current backup and schedule maintenance downtime for these kind of tasks!
-
-MySQL:
-
-```
-mariadb> OPTIMIZE TABLE icinga_statehistory;
-```
-
-> **Important**
->
-> Tables might not support optimization at runtime. This can take a **long** time.
->
-> `Table does not support optimize, doing recreate + analyze instead`.
-
-If you want to optimize all tables in a specified database, there is a script called `mysqlcheck`.
-This also allows to repair broken tables in the case of emergency.
-
-```
-mysqlcheck --optimize icinga
-```
-
-PostgreSQL:
-
-```
-icinga=# vacuum;
-VACUUM
-```
-
-> **Note**
->
-> Don't use `VACUUM FULL` as this has a severe impact on performance.
-
+To set up a Redis server and the Icinga DB feature, please follow the steps from the
+Icinga 2 [Installation](02-installation.md) guide. For the feature configuration options,
+see its [Icinga DB object type](09-object-types.md#icingadb) documentation.
 
 ## Metrics <a id="metrics"></a>
 
@@ -240,8 +93,8 @@ TCP port, defaulting to `2003`.
 
 You can enable the feature using
 
-```
-# icinga2 feature enable graphite
+```bash
+icinga2 feature enable graphite
 ```
 
 By default the [GraphiteWriter](09-object-types.md#objecttype-graphitewriter) feature
@@ -367,18 +220,25 @@ where Carbon Cache/Relay is running as receiver.
 ### InfluxDB Writer <a id="influxdb-writer"></a>
 
 Once there are new metrics available, Icinga 2 will directly write them to the
-defined InfluxDB HTTP API.
+defined InfluxDB v1/v2 HTTP API.
 
 You can enable the feature using
 
-```
-# icinga2 feature enable influxdb
+```bash
+icinga2 feature enable influxdb
 ```
 
-By default the [InfluxdbWriter](09-object-types.md#objecttype-influxdbwriter) feature
-expects the InfluxDB daemon to listen at `127.0.0.1` on port `8086`.
+or
 
-Measurement names and tags are fully configurable by the end user. The InfluxdbWriter
+```bash
+icinga2 feature enable influxdb2
+```
+
+By default the
+[InfluxdbWriter](09-object-types.md#objecttype-influxdbwriter)/[Influxdb2Writer](09-object-types.md#objecttype-influxdb2writer)
+features expect the InfluxDB daemon to listen at `127.0.0.1` on port `8086`.
+
+Measurement names and tags are fully configurable by the end user. The Influxdb(2)Writer
 object will automatically add a `metric` tag to each data point. This correlates to the
 perfdata label. Fields (value, warn, crit, min, max, unit) are created from data if available
 and the configuration allows it.  If a value associated with a tag is not able to be
@@ -389,12 +249,13 @@ escape characters when followed by a space or comma, but cannot be escaped thems
 As a result all trailling slashes in these fields are replaced with an underscore.  This
 predominantly affects Windows paths e.g. `C:\` becomes `C:_`.
 
-The database is assumed to exist so this object will make no attempt to create it currently.
+The database/bucket is assumed to exist so this object will make no attempt to create it currently.
 
 If [SELinux](22-selinux.md#selinux) is enabled, it will not allow access for Icinga 2 to InfluxDB until the [boolean](22-selinux.md#selinux-policy-booleans)
 `icinga2_can_connect_all` is set to true as InfluxDB is not providing its own policy.
 
-More configuration details can be found [here](09-object-types.md#objecttype-influxdbwriter).
+More configuration details can be found [here for v1](09-object-types.md#objecttype-influxdbwriter)
+and [here for v2](09-object-types.md#objecttype-influxdb2writer).
 
 #### Instance Tagging <a id="influxdb-writer-instance-tags"></a>
 
@@ -487,11 +348,11 @@ The check results include parsed performance data metrics if enabled.
 
 Enable the feature and restart Icinga 2.
 
-```
-# icinga2 feature enable elasticsearch
+```bash
+icinga2 feature enable elasticsearch
 ```
 
-The default configuration expects an Elasticsearch instance running on `localhost` on port `9200
+The default configuration expects an Elasticsearch instance running on `localhost` on port `9200`
  and writes to an index called `icinga2`.
 
 More configuration details can be found [here](09-object-types.md#objecttype-elasticsearchwriter).
@@ -561,18 +422,18 @@ or Logstash for additional filtering.
 
 #### GELF Writer <a id="gelfwriter"></a>
 
-The `Graylog Extended Log Format` (short: [GELF](http://docs.graylog.org/en/latest/pages/gelf.html))
+The `Graylog Extended Log Format` (short: [GELF](https://docs.graylog.org/en/latest/pages/gelf.html))
 can be used to send application logs directly to a TCP socket.
 
 While it has been specified by the [Graylog](https://www.graylog.org) project as their
-[input resource standard](http://docs.graylog.org/en/latest/pages/sending_data.html), other tools such as
+[input resource standard](https://docs.graylog.org/en/latest/pages/sending_data.html), other tools such as
 [Logstash](https://www.elastic.co/products/logstash) also support `GELF` as
 [input type](https://www.elastic.co/guide/en/logstash/current/plugins-inputs-gelf.html).
 
 You can enable the feature using
 
-```
-# icinga2 feature enable gelf
+```bash
+icinga2 feature enable gelf
 ```
 
 By default the `GelfWriter` object expects the GELF receiver to listen at `127.0.0.1` on TCP port `12201`.
@@ -611,8 +472,8 @@ write them to the defined TSDB TCP socket.
 
 You can enable the feature using
 
-```
-# icinga2 feature enable opentsdb
+```bash
+icinga2 feature enable opentsdb
 ```
 
 By default the `OpenTsdbWriter` object expects the TSD to listen at
@@ -694,7 +555,7 @@ Functionality exists to modify the built in OpenTSDB metric names that the plugi
 writes to. By default this is `icinga.host` and `icinga.service.<servicename>`.
 
 These prefixes can be modified as necessary to any arbitary string. The prefix
-configuration also supports Icinga macros, so if you rather use `<checkcommand>` 
+configuration also supports Icinga macros, so if you rather use `<checkcommand>`
 or any other variable instead of `<servicename>` you may do so.
 
 To configure OpenTSDB metric name prefixes, create or modify the `host_template` and/or
@@ -836,16 +697,16 @@ what attributes are available with links to each object type.
 > Ensure you do not name your custom attributes with a dot in the name.
 > Dots located inside a macro tell the interpreter to expand a
 > dictionary.
-> 
+>
 > Do not do this in your object configuration:
-> 
+>
 > `vars["my.attribute"]`
-> 
+>
 > as you will be unable to reference `my.attribute` because it is not a
 > dictionary.
-> 
+>
 > Instead, use underscores or another character:
-> 
+>
 > `vars.my_attribute` or `vars["my_attribute"]`
 
 
@@ -887,8 +748,8 @@ service_format_template = "DATATYPE::SERVICEPERFDATA\tTIMET::$icinga.timet$\tHOS
 The default templates are already provided with the Icinga 2 feature configuration
 which can be enabled using
 
-```
-# icinga2 feature enable perfdata
+```bash
+icinga2 feature enable perfdata
 ```
 
 By default all performance data files are rotated in a 15 seconds interval into
@@ -920,7 +781,504 @@ is running on.
 
 
 
-## Livestatus <a id="setting-up-livestatus"></a>
+
+## Deprecated Features <a id="deprecated-features"></a>
+
+### IDO Database (DB IDO) <a id="db-ido"></a>
+
+> **Note**
+>
+> This feature is DEPRECATED and may be removed in future releases.
+> Check the [roadmap](https://github.com/Icinga/icinga2/milestones).
+
+The IDO (Icinga Data Output) feature for Icinga 2 takes care of exporting all
+configuration and status information into a database. The IDO database is used
+by Icinga Web 2 as data backend. You can either use a
+[MySQL](#ido-with-mysql) or [PostgreSQL](#ido-with-postgresql) database.
+
+#### IDO with MySQL <a id="ido-with-mysql"></a>
+
+##### Install IDO Feature <a id="installing-database-mysql-modules"></a>
+
+The next step is to install the `icinga2-ido-mysql` package using your
+distribution's package manager.
+
+###### Debian / Ubuntu
+
+```bash
+apt-get install icinga2-ido-mysql
+```
+
+!!! note
+
+    The packages provide a database configuration wizard by
+    default. You can skip the automated setup and install/upgrade the
+    database manually if you prefer.
+
+###### CentOS 7
+
+!!! info
+
+    Note that installing `icinga2-ido-mysql` is only supported on CentOS 7 as CentOS 8 is EOL.
+
+```bash
+yum install icinga2-ido-mysql
+```
+
+###### RHEL 8
+
+```bash
+dnf install icinga2-ido-mysql
+```
+
+###### RHEL 7
+
+```bash
+yum install icinga2-ido-mysql
+```
+
+###### SLES
+
+```bash
+zypper install icinga2-ido-mysql
+```
+
+###### Amazon Linux 2
+
+```bash
+yum install icinga2-ido-mysql
+```
+
+##### Set up MySQL database <a id="setting-up-mysql-db"></a>
+
+Set up a MySQL database for Icinga 2:
+
+```bash
+# mysql -u root -p
+
+CREATE DATABASE icinga;
+GRANT ALTER, CREATE, SELECT, INSERT, UPDATE, DELETE, DROP, CREATE VIEW, INDEX, EXECUTE ON icinga.* TO 'icinga'@'localhost' IDENTIFIED BY 'icinga';
+quit
+```
+
+Please note that the example above uses the very simple password 'icinga' (in `IDENTIFIED BY 'icinga'`).
+Please choose a better password for your installation.
+
+After creating the database you can import the Icinga 2 IDO schema using the
+following command. Enter the icinga password into the prompt when asked.
+
+```bash
+mysql -u icinga -p icinga < /usr/share/icinga2-ido-mysql/schema/mysql.sql
+```
+
+##### Enable the IDO MySQL feature <a id="enable-ido-mysql"></a>
+
+The package provides a new configuration file that is installed in
+`/etc/icinga2/features-available/ido-mysql.conf`. You can update
+the database credentials in this file.
+
+All available attributes are explained in the
+[IdoMysqlConnection object](09-object-types.md#objecttype-idomysqlconnection)
+chapter.
+
+Enable the `ido-mysql` feature configuration file using the `icinga2` command:
+
+```bash
+# icinga2 feature enable ido-mysql
+Module 'ido-mysql' was enabled.
+Make sure to restart Icinga 2 for these changes to take effect.
+```
+
+Restart Icinga 2.
+
+```bash
+systemctl restart icinga2
+```
+
+#### IDO with PostgreSQL <a id="ido-with-postgresql"></a>
+
+##### Install IDO Feature <a id="installing-database-postgresql-modules"></a>
+
+The next step is to install the `icinga2-ido-pgsql` package using your
+distribution's package manager.
+
+###### Debian / Ubuntu
+
+```bash
+apt-get install icinga2-ido-pgsql
+```
+
+!!! note
+
+    Upstream Debian packages provide a database configuration wizard by default.
+    You can skip the automated setup and install/upgrade the database manually
+    if you prefer that.
+
+###### CentOS 7
+
+!!! info
+
+    Note that installing `icinga2-ido-pgsql` is only supported on CentOS 7 as CentOS 8 is EOL.
+
+```bash
+yum install icinga2-ido-pgsql
+```
+
+###### RHEL 8
+
+```bash
+dnf install icinga2-ido-pgsql
+```
+
+###### RHEL 7
+
+```bash
+yum install icinga2-ido-pgsql
+```
+
+###### SLES
+
+```bash
+zypper install icinga2-ido-pgsql
+```
+
+###### Amazon Linux 2
+
+```bash
+yum install icinga2-ido-pgsql
+```
+
+##### Set up PostgreSQL database
+
+Set up a PostgreSQL database for Icinga 2:
+
+```bash
+cd /tmp
+sudo -u postgres psql -c "CREATE ROLE icinga WITH LOGIN PASSWORD 'icinga'"
+sudo -u postgres createdb -O icinga -E UTF8 icinga
+```
+
+!!! note
+
+    It is assumed here that your locale is set to utf-8, you may run into problems otherwise.
+
+Locate your `pg_hba.conf` configuration file and add the icinga user with `md5` as authentication method
+and restart the postgresql server. Common locations for `pg_hba.conf` are either
+`/etc/postgresql/*/main/pg_hba.conf` or `/var/lib/pgsql/data/pg_hba.conf`.
+
+```
+# icinga
+local   icinga      icinga                            md5
+host    icinga      icinga      127.0.0.1/32          md5
+host    icinga      icinga      ::1/128               md5
+
+# "local" is for Unix domain socket connections only
+local   all         all                               ident
+# IPv4 local connections:
+host    all         all         127.0.0.1/32          ident
+# IPv6 local connections:
+host    all         all         ::1/128               ident
+```
+
+Restart PostgreSQL:
+
+```bash
+systemctl restart postgresql
+```
+
+After creating the database and permissions you need to import the IDO database
+schema using the following command:
+
+```bash
+export PGPASSWORD=icinga
+psql -U icinga -d icinga < /usr/share/icinga2-ido-pgsql/schema/pgsql.sql
+```
+
+##### Enable the IDO PostgreSQL feature <a id="enable-ido-postgresql"></a>
+
+The package provides a new configuration file that is installed in
+`/etc/icinga2/features-available/ido-pgsql.conf`. You can update
+the database credentials in this file.
+
+All available attributes are explained in the
+[IdoPgsqlConnection object](09-object-types.md#objecttype-idopgsqlconnection)
+chapter.
+
+Enable the `ido-pgsql` feature configuration file using the `icinga2` command:
+
+```
+# icinga2 feature enable ido-pgsql
+Module 'ido-pgsql' was enabled.
+Make sure to restart Icinga 2 for these changes to take effect.
+```
+
+Restart Icinga 2.
+
+```bash
+systemctl restart icinga2
+```
+
+#### Configuration
+
+Details on the configuration can be found in the
+[IdoMysqlConnection](09-object-types.md#objecttype-idomysqlconnection) and
+[IdoPgsqlConnection](09-object-types.md#objecttype-idopgsqlconnection)
+object configuration documentation.
+
+#### DB IDO Health <a id="db-ido-health"></a>
+
+If the monitoring health indicator is critical in Icinga Web 2,
+you can use the following queries to manually check whether Icinga 2
+is actually updating the IDO database.
+
+Icinga 2 writes its current status to the `icinga_programstatus` table
+every 10 seconds. The query below checks 60 seconds into the past which is a reasonable
+amount of time -- adjust it for your requirements. If the condition is not met,
+the query returns an empty result.
+
+> **Tip**
+>
+> Use [check plugins](05-service-monitoring.md#service-monitoring-plugins) to monitor the backend.
+
+Replace the `default` string with your instance name if different.
+
+Example for MySQL:
+
+```
+# mysql -u root -p icinga -e "SELECT status_update_time FROM icinga_programstatus ps
+  JOIN icinga_instances i ON ps.instance_id=i.instance_id
+  WHERE (UNIX_TIMESTAMP(ps.status_update_time) > UNIX_TIMESTAMP(NOW())-60)
+  AND i.instance_name='default';"
+
++---------------------+
+| status_update_time  |
++---------------------+
+| 2014-05-29 14:29:56 |
++---------------------+
+```
+
+Example for PostgreSQL:
+
+```
+# export PGPASSWORD=icinga; psql -U icinga -d icinga -c "SELECT ps.status_update_time FROM icinga_programstatus AS ps
+  JOIN icinga_instances AS i ON ps.instance_id=i.instance_id
+  WHERE ((SELECT extract(epoch from status_update_time) FROM icinga_programstatus) > (SELECT extract(epoch from now())-60))
+  AND i.instance_name='default'";
+
+status_update_time
+------------------------
+ 2014-05-29 15:11:38+02
+(1 Zeile)
+```
+
+A detailed list on the available table attributes can be found in the [DB IDO Schema documentation](24-appendix.md#schema-db-ido).
+
+#### DB IDO in Cluster HA Zones <a id="db-ido-cluster-ha"></a>
+
+The DB IDO feature supports [High Availability](06-distributed-monitoring.md#distributed-monitoring-high-availability-db-ido) in
+the Icinga 2 cluster.
+
+By default, both endpoints in a zone calculate the
+endpoint which activates the feature, the other endpoint
+automatically pauses it. If the cluster connection
+breaks at some point, the paused IDO feature automatically
+does a failover.
+
+You can disable this behaviour by setting `enable_ha = false`
+in both feature configuration files.
+
+#### DB IDO Cleanup <a id="db-ido-cleanup"></a>
+
+Objects get deactivated when they are deleted from the configuration.
+This is visible with the `is_active` column in the `icinga_objects` table.
+Therefore all queries need to join this table and add `WHERE is_active=1` as
+condition. Deleted objects preserve their history table entries for later SLA
+reporting.
+
+Historical data isn't purged by default. You can enable the least
+kept data age inside the `cleanup` configuration attribute for the
+IDO features [IdoMysqlConnection](09-object-types.md#objecttype-idomysqlconnection)
+and [IdoPgsqlConnection](09-object-types.md#objecttype-idopgsqlconnection).
+
+Example if you prefer to keep notification history for 30 days:
+
+```
+  cleanup = {
+     notifications_age = 30d
+     contactnotifications_age = 30d
+  }
+```
+
+The historical tables are populated depending on the data `categories` specified.
+Some tables are empty by default.
+
+#### DB IDO Tuning <a id="db-ido-tuning"></a>
+
+As with any application database, there are ways to optimize and tune the database performance.
+
+General tips for performance tuning:
+
+* [MariaDB KB](https://mariadb.com/kb/en/library/optimization-and-tuning/)
+* [PostgreSQL Wiki](https://wiki.postgresql.org/wiki/Performance_Optimization)
+
+Re-creation of indexes, changed column values, etc. will increase the database size. Ensure to
+add health checks for this, and monitor the trend in your Grafana dashboards.
+
+In order to optimize the tables, there are different approaches. Always keep in mind to have a
+current backup and schedule maintenance downtime for these kind of tasks!
+
+MySQL:
+
+```
+mariadb> OPTIMIZE TABLE icinga_statehistory;
+```
+
+> **Important**
+>
+> Tables might not support optimization at runtime. This can take a **long** time.
+>
+> `Table does not support optimize, doing recreate + analyze instead`.
+
+If you want to optimize all tables in a specified database, there is a script called `mysqlcheck`.
+This also allows to repair broken tables in the case of emergency.
+
+```bash
+mysqlcheck --optimize icinga
+```
+
+PostgreSQL:
+
+```
+icinga=# vacuum;
+VACUUM
+```
+
+> **Note**
+>
+> Don't use `VACUUM FULL` as this has a severe impact on performance.
+
+### Status Data Files <a id="status-data"></a>
+
+> **Note**
+>
+> This feature is DEPRECATED and may be removed in future releases.
+> Check the [roadmap](https://github.com/Icinga/icinga2/milestones).
+
+Icinga 1.x writes object configuration data and status data in a cyclic
+interval to its `objects.cache` and `status.dat` files. Icinga 2 provides
+the `StatusDataWriter` object which dumps all configuration objects and
+status updates in a regular interval.
+
+```bash
+icinga2 feature enable statusdata
+```
+
+If you are not using any web interface or addon which uses these files,
+you can safely disable this feature.
+
+### Compat Log Files <a id="compat-logging"></a>
+
+> **Note**
+>
+> This feature is DEPRECATED and may be removed in future releases.
+> Check the [roadmap](https://github.com/Icinga/icinga2/milestones).
+
+The Icinga 1.x log format is considered being the `Compat Log`
+in Icinga 2 provided with the `CompatLogger` object.
+
+These logs are used for informational representation in
+external web interfaces parsing the logs, but also to generate
+SLA reports and trends.
+The [Livestatus](14-features.md#setting-up-livestatus) feature uses these logs
+for answering queries to historical tables.
+
+The `CompatLogger` object can be enabled with
+
+```bash
+icinga2 feature enable compatlog
+```
+
+By default, the Icinga 1.x log file called `icinga.log` is located
+in `/var/log/icinga2/compat`. Rotated log files are moved into
+`var/log/icinga2/compat/archives`.
+
+### External Command Pipe <a id="external-commands"></a>
+
+> **Note**
+>
+> Please use the [REST API](12-icinga2-api.md#icinga2-api) as modern and secure alternative
+> for external actions.
+
+> **Note**
+>
+> This feature is DEPRECATED and may be removed in future releases.
+> Check the [roadmap](https://github.com/Icinga/icinga2/milestones).
+
+Icinga 2 provides an external command pipe for processing commands
+triggering specific actions (for example rescheduling a service check
+through the web interface).
+
+In order to enable the `ExternalCommandListener` configuration use the
+following command and restart Icinga 2 afterwards:
+
+```bash
+icinga2 feature enable command
+```
+
+Icinga 2 creates the command pipe file as `/var/run/icinga2/cmd/icinga2.cmd`
+using the default configuration.
+
+Web interfaces and other Icinga addons are able to send commands to
+Icinga 2 through the external command pipe, for example for rescheduling
+a forced service check:
+
+```
+# /bin/echo "[`date +%s`] SCHEDULE_FORCED_SVC_CHECK;localhost;ping4;`date +%s`" >> /var/run/icinga2/cmd/icinga2.cmd
+
+# tail -f /var/log/messages
+
+Oct 17 15:01:25 icinga-server icinga2: Executing external command: [1382014885] SCHEDULE_FORCED_SVC_CHECK;localhost;ping4;1382014885
+Oct 17 15:01:25 icinga-server icinga2: Rescheduling next check for service 'ping4'
+```
+
+A list of currently supported external commands can be found [here](24-appendix.md#external-commands-list-detail).
+
+Detailed information on the commands and their required parameters can be found
+on the [Icinga 1.x documentation](https://docs.icinga.com/latest/en/extcommands2.html).
+
+
+### Check Result Files <a id="check-result-files"></a>
+
+> **Note**
+>
+> This feature is DEPRECATED and may be removed in future releases.
+> Check the [roadmap](https://github.com/Icinga/icinga2/milestones).
+
+Icinga 1.x writes its check result files to a temporary spool directory
+where they are processed in a regular interval.
+While this is extremely inefficient in performance regards it has been
+rendered useful for passing passive check results directly into Icinga 1.x
+skipping the external command pipe.
+
+Several clustered/distributed environments and check-aggregation addons
+use that method. In order to support step-by-step migration of these
+environments, Icinga 2 supports the `CheckResultReader` object.
+
+There is no feature configuration available, but it must be defined
+on-demand in your Icinga 2 objects configuration.
+
+```
+object CheckResultReader "reader" {
+  spool_dir = "/data/check-results"
+}
+```
+
+### Livestatus <a id="setting-up-livestatus"></a>
+
+> **Note**
+>
+> This feature is DEPRECATED and may be removed in future releases.
+> Check the [roadmap](https://github.com/Icinga/icinga2/milestones).
 
 The [MK Livestatus](https://mathias-kettner.de/checkmk_livestatus.html) project
 implements a query protocol that lets users query their Icinga instance for
@@ -934,7 +1292,7 @@ Livestatus.
 >
 > Only install the Livestatus feature if your web interface or addon requires
 > you to do so.
-> [Icinga Web 2](02-installation.md#setting-up-icingaweb2) does not need
+> [Icinga Web 2](https://icinga.com/docs/icinga-web-2/latest/doc/02-Installation/) does not need
 > Livestatus.
 
 Details on the available tables and attributes with Icinga 2 can be found
@@ -942,14 +1300,14 @@ in the [Livestatus Schema](24-appendix.md#schema-livestatus) section.
 
 You can enable Livestatus using icinga2 feature enable:
 
-```
-# icinga2 feature enable livestatus
+```bash
+icinga2 feature enable livestatus
 ```
 
 After that you will have to restart Icinga 2:
 
-```
-# systemctl restart icinga2
+```bash
+systemctl restart icinga2
 ```
 
 By default the Livestatus socket is available in `/var/run/icinga2/cmd/livestatus`.
@@ -957,8 +1315,8 @@ By default the Livestatus socket is available in `/var/run/icinga2/cmd/livestatu
 In order for queries and commands to work you will need to add your query user
 (e.g. your web server) to the `icingacmd` group:
 
-```
-# usermod -a -G icingacmd www-data
+```bash
+usermod -a -G icingacmd www-data
 ```
 
 The Debian packages use `nagios` as the user and group name. Make sure to change `icingacmd` to
@@ -971,11 +1329,11 @@ In order to use the historical tables provided by the livestatus feature (for ex
 are expected to be in `/var/log/icinga2/compat`. A different path can be set using the
 `compat_log_path` configuration attribute.
 
-```
-# icinga2 feature enable compatlog
+```bash
+icinga2 feature enable compatlog
 ```
 
-### Livestatus Sockets <a id="livestatus-sockets"></a>
+#### Livestatus Sockets <a id="livestatus-sockets"></a>
 
 Other to the Icinga 1.x Addon, Icinga 2 supports two socket types
 
@@ -985,7 +1343,7 @@ Other to the Icinga 1.x Addon, Icinga 2 supports two socket types
 Details on the configuration can be found in the [LivestatusListener](09-object-types.md#objecttype-livestatuslistener)
 object configuration.
 
-### Livestatus GET Queries <a id="livestatus-get-queries"></a>
+#### Livestatus GET Queries <a id="livestatus-get-queries"></a>
 
 > **Note**
 >
@@ -994,7 +1352,7 @@ object configuration.
 > a unix socket.
 
 There also is a Perl module available in CPAN for accessing the Livestatus socket
-programmatically: [Monitoring::Livestatus](http://search.cpan.org/~nierlein/Monitoring-Livestatus-0.74/)
+programmatically: [Monitoring::Livestatus](https://metacpan.org/release/NIERLEIN/Monitoring-Livestatus-0.74)
 
 
 Example using the unix socket:
@@ -1014,15 +1372,15 @@ EOF
 (cat servicegroups; sleep 1) | netcat 127.0.0.1 6558
 ```
 
-### Livestatus COMMAND Queries <a id="livestatus-command-queries"></a>
+#### Livestatus COMMAND Queries <a id="livestatus-command-queries"></a>
 
 A list of available external commands and their parameters can be found [here](24-appendix.md#external-commands-list-detail)
 
-```
-$ echo -e 'COMMAND <externalcommandstring>' | netcat 127.0.0.1 6558
+```bash
+echo -e 'COMMAND <externalcommandstring>' | netcat 127.0.0.1 6558
 ```
 
-### Livestatus Filters <a id="livestatus-filters"></a>
+#### Livestatus Filters <a id="livestatus-filters"></a>
 
 and, or, negate
 
@@ -1038,7 +1396,7 @@ and, or, negate
    >=       |          | Greater than or equal
 
 
-### Livestatus Stats <a id="livestatus-stats"></a>
+#### Livestatus Stats <a id="livestatus-stats"></a>
 
 Schema: "Stats: aggregatefunction aggregateattribute"
 
@@ -1072,7 +1430,7 @@ OutputFormat: json
 ResponseHeader: fixed16
 ```
 
-### Livestatus Output <a id="livestatus-output"></a>
+#### Livestatus Output <a id="livestatus-output"></a>
 
 * CSV
 
@@ -1090,7 +1448,7 @@ Separators: 10 59 44 124
 
 Default separators.
 
-### Livestatus Error Codes <a id="livestatus-error-codes"></a>
+#### Livestatus Error Codes <a id="livestatus-error-codes"></a>
 
   Code      | Description
   ----------|--------------
@@ -1098,7 +1456,7 @@ Default separators.
   404       | Table does not exist
   452       | Exception on query
 
-### Livestatus Tables <a id="livestatus-tables"></a>
+#### Livestatus Tables <a id="livestatus-tables"></a>
 
   Table         | Join      |Description
   --------------|-----------|----------------------------
@@ -1123,122 +1481,3 @@ Default separators.
 The `commands` table is populated with `CheckCommand`, `EventCommand` and `NotificationCommand` objects.
 
 A detailed list on the available table attributes can be found in the [Livestatus Schema documentation](24-appendix.md#schema-livestatus).
-
-
-## Deprecated Features <a id="deprecated-features"></a>
-
-### Status Data Files <a id="status-data"></a>
-
-> **Note**
->
-> This feature is DEPRECATED and will be removed in future releases.
-> Check the [roadmap](https://github.com/Icinga/icinga2/milestones).
-
-Icinga 1.x writes object configuration data and status data in a cyclic
-interval to its `objects.cache` and `status.dat` files. Icinga 2 provides
-the `StatusDataWriter` object which dumps all configuration objects and
-status updates in a regular interval.
-
-```
-# icinga2 feature enable statusdata
-```
-
-If you are not using any web interface or addon which uses these files,
-you can safely disable this feature.
-
-### Compat Log Files <a id="compat-logging"></a>
-
-> **Note**
->
-> This feature is DEPRECATED and will be removed in future releases.
-> Check the [roadmap](https://github.com/Icinga/icinga2/milestones).
-
-The Icinga 1.x log format is considered being the `Compat Log`
-in Icinga 2 provided with the `CompatLogger` object.
-
-These logs are used for informational representation in
-external web interfaces parsing the logs, but also to generate
-SLA reports and trends.
-The [Livestatus](14-features.md#setting-up-livestatus) feature uses these logs
-for answering queries to historical tables.
-
-The `CompatLogger` object can be enabled with
-
-```
-# icinga2 feature enable compatlog
-```
-
-By default, the Icinga 1.x log file called `icinga.log` is located
-in `/var/log/icinga2/compat`. Rotated log files are moved into
-`var/log/icinga2/compat/archives`.
-
-### External Command Pipe <a id="external-commands"></a>
-
-> **Note**
->
-> Please use the [REST API](12-icinga2-api.md#icinga2-api) as modern and secure alternative
-> for external actions.
-
-> **Note**
->
-> This feature is DEPRECATED and will be removed in future releases.
-> Check the [roadmap](https://github.com/Icinga/icinga2/milestones).
-
-Icinga 2 provides an external command pipe for processing commands
-triggering specific actions (for example rescheduling a service check
-through the web interface).
-
-In order to enable the `ExternalCommandListener` configuration use the
-following command and restart Icinga 2 afterwards:
-
-```
-# icinga2 feature enable command
-```
-
-Icinga 2 creates the command pipe file as `/var/run/icinga2/cmd/icinga2.cmd`
-using the default configuration.
-
-Web interfaces and other Icinga addons are able to send commands to
-Icinga 2 through the external command pipe, for example for rescheduling
-a forced service check:
-
-```
-# /bin/echo "[`date +%s`] SCHEDULE_FORCED_SVC_CHECK;localhost;ping4;`date +%s`" >> /var/run/icinga2/cmd/icinga2.cmd
-
-# tail -f /var/log/messages
-
-Oct 17 15:01:25 icinga-server icinga2: Executing external command: [1382014885] SCHEDULE_FORCED_SVC_CHECK;localhost;ping4;1382014885
-Oct 17 15:01:25 icinga-server icinga2: Rescheduling next check for service 'ping4'
-```
-
-A list of currently supported external commands can be found [here](24-appendix.md#external-commands-list-detail).
-
-Detailed information on the commands and their required parameters can be found
-on the [Icinga 1.x documentation](https://docs.icinga.com/latest/en/extcommands2.html).
-
-
-### Check Result Files <a id="check-result-files"></a>
-
-> **Note**
->
-> This feature is DEPRECATED and will be removed in future releases.
-> Check the [roadmap](https://github.com/Icinga/icinga2/milestones).
-
-Icinga 1.x writes its check result files to a temporary spool directory
-where they are processed in a regular interval.
-While this is extremely inefficient in performance regards it has been
-rendered useful for passing passive check results directly into Icinga 1.x
-skipping the external command pipe.
-
-Several clustered/distributed environments and check-aggregation addons
-use that method. In order to support step-by-step migration of these
-environments, Icinga 2 supports the `CheckResultReader` object.
-
-There is no feature configuration available, but it must be defined
-on-demand in your Icinga 2 objects configuration.
-
-```
-object CheckResultReader "reader" {
-  spool_dir = "/data/check-results"
-}
-```

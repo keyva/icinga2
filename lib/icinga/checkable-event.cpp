@@ -19,7 +19,7 @@ EventCommand::Ptr Checkable::GetEventCommand() const
 
 void Checkable::ExecuteEventHandler(const Dictionary::Ptr& resolvedMacros, bool useResolvedMacros)
 {
-	CONTEXT("Executing event handler for object '" + GetName() + "'");
+	CONTEXT("Executing event handler for object '" << GetName() << "'");
 
 	if (!IcingaApplication::GetInstance()->GetEnableEventHandlers() || !GetEnableEventHandler())
 		return;
@@ -49,7 +49,7 @@ void Checkable::ExecuteEventHandler(const Dictionary::Ptr& resolvedMacros, bool 
 
 	ec->Execute(this, macros, useResolvedMacros);
 
-	if (endpoint) {
+	if (endpoint && !GetExtension("agent_check")) {
 		Dictionary::Ptr message = new Dictionary();
 		message->Set("jsonrpc", "2.0");
 		message->Set("method", "event::ExecuteCommand");

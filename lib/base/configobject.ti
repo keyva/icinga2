@@ -57,12 +57,13 @@ private:
 abstract class ConfigObject : ConfigObjectBase < ConfigType
 {
 	[config, no_user_modify] String __name (Name);
-	[config, no_user_modify] String "name" (ShortName) {
+	[config, no_user_modify, required] String "name" (ShortName) {
 		get {{{
-			if (m_ShortName.IsEmpty())
+			String shortName = m_ShortName.load();
+			if (shortName.IsEmpty())
 				return GetName();
 			else
-				return m_ShortName;
+				return shortName;
 		}}}
 	};
 	[config, no_user_modify] name(Zone) zone (ZoneName);
@@ -87,6 +88,7 @@ abstract class ConfigObject : ConfigObjectBase < ConfigType
 	[state, no_user_modify] double version {
 		default {{{ return 0; }}}
 	};
+	[no_user_view, no_user_modify] String icingadb_identifier;
 };
 
 }

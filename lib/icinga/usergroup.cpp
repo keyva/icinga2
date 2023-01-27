@@ -2,6 +2,7 @@
 
 #include "icinga/usergroup.hpp"
 #include "icinga/usergroup-ti.cpp"
+#include "icinga/notification.hpp"
 #include "config/objectrule.hpp"
 #include "config/configitem.hpp"
 #include "base/configtype.hpp"
@@ -22,7 +23,7 @@ bool UserGroup::EvaluateObjectRule(const User::Ptr& user, const ConfigItem::Ptr&
 {
 	String groupName = group->GetName();
 
-	CONTEXT("Evaluating rule for group '" + groupName + "'");
+	CONTEXT("Evaluating rule for group '" << groupName << "'");
 
 	ScriptFrame frame(true);
 	if (group->GetScope())
@@ -45,7 +46,7 @@ bool UserGroup::EvaluateObjectRule(const User::Ptr& user, const ConfigItem::Ptr&
 
 void UserGroup::EvaluateObjectRules(const User::Ptr& user)
 {
-	CONTEXT("Evaluating group membership for user '" + user->GetName() + "'");
+	CONTEXT("Evaluating group membership for user '" << user->GetName() << "'");
 
 	for (const ConfigItem::Ptr& group : ConfigItem::GetItems(UserGroup::TypeInstance))
 	{
@@ -58,7 +59,7 @@ void UserGroup::EvaluateObjectRules(const User::Ptr& user)
 
 std::set<User::Ptr> UserGroup::GetMembers() const
 {
-	boost::mutex::scoped_lock lock(m_UserGroupMutex);
+	std::unique_lock<std::mutex> lock(m_UserGroupMutex);
 	return m_Members;
 }
 
@@ -66,14 +67,32 @@ void UserGroup::AddMember(const User::Ptr& user)
 {
 	user->AddGroup(GetName());
 
-	boost::mutex::scoped_lock lock(m_UserGroupMutex);
+	std::unique_lock<std::mutex> lock(m_UserGroupMutex);
 	m_Members.insert(user);
 }
 
 void UserGroup::RemoveMember(const User::Ptr& user)
 {
-	boost::mutex::scoped_lock lock(m_UserGroupMutex);
+	std::unique_lock<std::mutex> lock(m_UserGroupMutex);
 	m_Members.erase(user);
+}
+
+std::set<Notification::Ptr> UserGroup::GetNotifications() const
+{
+	std::unique_lock<std::mutex> lock(m_UserGroupMutex);
+	return m_Notifications;
+}
+
+void UserGroup::AddNotification(const Notification::Ptr& notification)
+{
+	std::unique_lock<std::mutex> lock(m_UserGroupMutex);
+	m_Notifications.insert(notification);
+}
+
+void UserGroup::RemoveNotification(const Notification::Ptr& notification)
+{
+	std::unique_lock<std::mutex> lock(m_UserGroupMutex);
+	m_Notifications.erase(notification);
 }
 
 bool UserGroup::ResolveGroupMembership(const User::Ptr& user, bool add, int rstack) {

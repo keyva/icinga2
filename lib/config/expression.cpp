@@ -13,6 +13,7 @@
 #include "base/loader.hpp"
 #include "base/reference.hpp"
 #include "base/namespace.hpp"
+#include "base/defer.hpp"
 #include <boost/exception_ptr.hpp>
 #include <boost/exception/errinfo_nested_exception.hpp>
 
@@ -46,22 +47,20 @@ ExpressionResult Expression::Evaluate(ScriptFrame& frame, DebugHint *dhint) cons
 #endif /* I2_DEBUG */
 
 		frame.IncreaseStackDepth();
+
+		Defer decreaseStackDepth([&frame]{
+			frame.DecreaseStackDepth();
+		});
+
 		ExpressionResult result = DoEvaluate(frame, dhint);
-		frame.DecreaseStackDepth();
 		return result;
 	} catch (ScriptError& ex) {
-		frame.DecreaseStackDepth();
-
 		ScriptBreakpoint(frame, &ex, GetDebugInfo());
 		throw;
 	} catch (const std::exception& ex) {
-		frame.DecreaseStackDepth();
-
 		BOOST_THROW_EXCEPTION(ScriptError("Error while evaluating expression: " + String(ex.what()), GetDebugInfo())
 			<< boost::errinfo_nested_exception(boost::current_exception()));
 	}
-
-	frame.DecreaseStackDepth();
 }
 
 bool Expression::GetReference(ScriptFrame& frame, bool init_dict, Value *parent, String *index, DebugHint **dhint) const
@@ -676,20 +675,11 @@ ExpressionResult SetConstExpression::DoEvaluate(ScriptFrame& frame, DebugHint *d
 {
 	auto globals = ScriptGlobal::GetGlobals();
 
-	auto attr = globals->GetAttribute(m_Name);
-
-	if (dynamic_pointer_cast<ConstEmbeddedNamespaceValue>(attr)) {
-		std::ostringstream msgbuf;
-		msgbuf << "Value for constant '" << m_Name << "' was modified. This behaviour is deprecated.\n";
-		ShowCodeLocation(msgbuf, GetDebugInfo(), false);
-		Log(LogWarning, msgbuf.str());
-	}
-
 	ExpressionResult operandres = m_Operand->Evaluate(frame);
 	CHECK_RESULT(operandres);
 	Value operand = operandres.GetValue();
 
-	globals->SetAttribute(m_Name, new ConstEmbeddedNamespaceValue(operand));
+	globals->Set(m_Name, operand, true);
 
 	return Empty;
 }
@@ -931,7 +921,7 @@ ExpressionResult ApplyExpression::DoEvaluate(ScriptFrame& frame, DebugHint *dhin
 
 ExpressionResult NamespaceExpression::DoEvaluate(ScriptFrame& frame, DebugHint *dhint) const
 {
-	Namespace::Ptr ns = new Namespace(new ConstNamespaceBehavior());
+	Namespace::Ptr ns = new Namespace(true);
 
 	ScriptFrame innerFrame(true, ns);
 	ExpressionResult result = m_Expression->Evaluate(innerFrame);

@@ -77,11 +77,13 @@ void OpenTsdbWriter::Resume()
 
 	m_ReconnectTimer = new Timer();
 	m_ReconnectTimer->SetInterval(10);
-	m_ReconnectTimer->OnTimerExpired.connect(std::bind(&OpenTsdbWriter::ReconnectTimerHandler, this));
+	m_ReconnectTimer->OnTimerExpired.connect([this](const Timer * const&) { ReconnectTimerHandler(); });
 	m_ReconnectTimer->Start();
 	m_ReconnectTimer->Reschedule(0);
 
-	Service::OnNewCheckResult.connect(std::bind(&OpenTsdbWriter::CheckResultHandler, this, _1, _2));
+	m_HandleCheckResults = Service::OnNewCheckResult.connect([this](const Checkable::Ptr& checkable, const CheckResult::Ptr& cr, const MessageOrigin::Ptr&) {
+		CheckResultHandler(checkable, cr);
+	});
 }
 
 /**
@@ -89,6 +91,7 @@ void OpenTsdbWriter::Resume()
  */
 void OpenTsdbWriter::Pause()
 {
+	m_HandleCheckResults.disconnect();
 	m_ReconnectTimer.reset();
 
 	Log(LogInformation, "OpentsdbWriter")
@@ -155,7 +158,7 @@ void OpenTsdbWriter::CheckResultHandler(const Checkable::Ptr& checkable, const C
 	if (IsPaused())
 		return;
 
-	CONTEXT("Processing check result for '" + checkable->GetName() + "'");
+	CONTEXT("Processing check result for '" << checkable->GetName() << "'");
 
 	if (!IcingaApplication::GetInstance()->GetEnablePerfdata() || !checkable->GetEnablePerfdata())
 		return;
@@ -376,7 +379,7 @@ void OpenTsdbWriter::SendMetric(const Checkable::Ptr& checkable, const String& m
 	 * put <metric> <timestamp> <value> <tagk1=tagv1[ tagk2=tagv2 ...tagkN=tagvN]>
 	 * "tags" must include at least one tag, we use "host=HOSTNAME"
 	 */
-	msgbuf << "put " << metric << " " << static_cast<long>(ts) << " " << Convert::ToString(value) << " " << tags_string;
+	msgbuf << "put " << metric << " " << static_cast<long>(ts) << " " << Convert::ToString(value) << tags_string;
 
 	Log(LogDebug, "OpenTsdbWriter")
 		<< "Checkable '" << checkable->GetName() << "' adds to metric list: '" << msgbuf.str() << "'.";

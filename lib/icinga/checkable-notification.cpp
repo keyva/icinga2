@@ -10,6 +10,7 @@
 #include "base/exception.hpp"
 #include "base/context.hpp"
 #include "base/convert.hpp"
+#include "base/lazy-init.hpp"
 #include "remote/apilistener.hpp"
 
 using namespace icinga;
@@ -33,7 +34,7 @@ void Checkable::SendNotifications(NotificationType type, const CheckResult::Ptr&
 {
 	String checkableName = GetName();
 
-	CONTEXT("Sending notifications for object '" + checkableName + "'");
+	CONTEXT("Sending notifications for object '" << checkableName << "'");
 
 	bool force = GetForceNextNotification();
 
@@ -74,7 +75,7 @@ void Checkable::SendNotifications(NotificationType type, const CheckResult::Ptr&
 							<< "Notification '" << notification->GetName() << "': there are some stashed notifications. Stashing notification to preserve order.";
 
 						stashedNotifications->Add(new Dictionary({
-							{"type", type},
+							{"notification_type", type},
 							{"cr", cr},
 							{"force", force},
 							{"reminder", false},
@@ -99,7 +100,7 @@ void Checkable::SendNotifications(NotificationType type, const CheckResult::Ptr&
 				<< "Notification '" << notification->GetName() << "': object authority hasn't been updated, yet. Stashing notification.";
 
 			notification->GetStashedNotifications()->Add(new Dictionary({
-				{"type", type},
+				{"notification_type", type},
 				{"cr", cr},
 				{"force", force},
 				{"reminder", false},
@@ -112,118 +113,128 @@ void Checkable::SendNotifications(NotificationType type, const CheckResult::Ptr&
 
 std::set<Notification::Ptr> Checkable::GetNotifications() const
 {
-	boost::mutex::scoped_lock lock(m_NotificationMutex);
+	std::unique_lock<std::mutex> lock(m_NotificationMutex);
 	return m_Notifications;
 }
 
 void Checkable::RegisterNotification(const Notification::Ptr& notification)
 {
-	boost::mutex::scoped_lock lock(m_NotificationMutex);
+	std::unique_lock<std::mutex> lock(m_NotificationMutex);
 	m_Notifications.insert(notification);
 }
 
 void Checkable::UnregisterNotification(const Notification::Ptr& notification)
 {
-	boost::mutex::scoped_lock lock(m_NotificationMutex);
+	std::unique_lock<std::mutex> lock(m_NotificationMutex);
 	m_Notifications.erase(notification);
 }
 
-static void FireSuppressedNotifications(Checkable* checkable)
+void Checkable::FireSuppressedNotifications()
 {
-	if (!checkable->IsActive())
+	if (!IsActive())
 		return;
 
-	if (checkable->IsPaused())
+	if (IsPaused())
 		return;
 
-	if (!checkable->GetEnableNotifications())
+	if (!GetEnableNotifications())
 		return;
 
-	int suppressed_types (checkable->GetSuppressedNotifications());
+	int suppressed_types (GetSuppressedNotifications());
 	if (!suppressed_types)
 		return;
 
 	int subtract = 0;
 
-	for (auto type : {NotificationProblem, NotificationRecovery, NotificationFlappingStart, NotificationFlappingEnd}) {
-		if (suppressed_types & type) {
-			bool still_applies;
-			auto cr (checkable->GetLastCheckResult());
+	{
+		LazyInit<bool> wasLastParentRecoveryRecent ([this]() {
+			auto cr (GetLastCheckResult());
 
-			switch (type) {
-				case NotificationProblem:
-					still_applies = cr && !checkable->IsStateOK(cr->GetState()) && checkable->GetStateType() == StateTypeHard;
-					break;
-				case NotificationRecovery:
-					still_applies = cr && checkable->IsStateOK(cr->GetState());
-					break;
-				case NotificationFlappingStart:
-					still_applies = checkable->IsFlapping();
-					break;
-				case NotificationFlappingEnd:
-					still_applies = !checkable->IsFlapping();
-					break;
-				default:
-					break;
+			if (!cr) {
+				return true;
 			}
 
-			if (still_applies) {
-				bool still_suppressed;
+			auto threshold (cr->GetExecutionStart());
+			Host::Ptr host;
+			Service::Ptr service;
+			tie(host, service) = GetHostService(this);
 
-				switch (type) {
-					case NotificationProblem:
-						/* Fall through. */
-					case NotificationRecovery:
-						still_suppressed = !checkable->IsReachable(DependencyNotification) || checkable->IsInDowntime() || checkable->IsAcknowledged();
-						break;
-					case NotificationFlappingStart:
-						/* Fall through. */
-					case NotificationFlappingEnd:
-						still_suppressed = checkable->IsInDowntime();
-						break;
-					default:
-						break;
+			if (service) {
+				ObjectLock oLock (host);
+
+				if (!host->GetProblem() && host->GetLastStateChange() >= threshold) {
+					return true;
 				}
+			}
 
-				if (!still_suppressed && checkable->GetEnableActiveChecks()) {
-					/* If e.g. the downtime just ended, but the service is still not ok, we would re-send the stashed problem notification.
-					 * But if the next check result recovers the service soon, we would send a recovery notification soon after the problem one.
-					 * This is not desired, especially for lots of services at once.
-					 * Because of that if there's likely to be a check result soon,
-					 * we delay the re-sending of the stashed notification until the next check.
-					 * That check either doesn't change anything and we finally re-send the stashed problem notification
-					 * or recovers the service and we drop the stashed notification. */
+			for (auto& dep : GetDependencies()) {
+				auto parent (dep->GetParent());
+				ObjectLock oLock (parent);
 
-					/* One minute unless the check interval is too short so the next check will always run during the next minute. */
-					auto threshold (checkable->GetCheckInterval() - 10);
-
-					if (threshold > 60)
-						threshold = 60;
-					else if (threshold < 0)
-						threshold = 0;
-
-					still_suppressed = checkable->GetNextCheck() <= Utility::GetTime() + threshold;
+				if (!parent->GetProblem() && parent->GetLastStateChange() >= threshold) {
+					return true;
 				}
+			}
 
-				if (!still_suppressed) {
-					Checkable::OnNotificationsRequested(checkable, type, cr, "", "", nullptr);
+			return false;
+		});
 
+		if (suppressed_types & (NotificationProblem|NotificationRecovery)) {
+			CheckResult::Ptr cr = GetLastCheckResult();
+			NotificationType type = cr && IsStateOK(cr->GetState()) ? NotificationRecovery : NotificationProblem;
+			bool state_suppressed = NotificationReasonSuppressed(NotificationProblem) || NotificationReasonSuppressed(NotificationRecovery);
+
+			/* Only process (i.e. send or dismiss) suppressed state notifications if the following conditions are met:
+			 *
+			 *   1. State notifications are not suppressed at the moment. State notifications must only be removed from
+			 *      the suppressed notifications bitset after the reason for the suppression is gone as these bits are
+			 *      used as a marker for when to set the state_before_suppression attribute.
+			 *   2. The checkable is in a hard state. Soft states represent a state where we are not certain yet about
+			 *      the actual state and wait with sending notifications. If we want to immediately send a notification,
+			 *      we might send a recovery notification for something that just started failing or a problem
+			 *      notification which might be for an intermittent problem that would have never received a
+			 *      notification if there was no suppression as it still was in a soft state. Both cases aren't ideal so
+			 *      better wait until we are certain.
+			 *   3. The checkable isn't likely checked soon. For example, if a downtime ended, give the checkable a
+			 *      chance to recover afterwards before sending a notification.
+			 *   4. No parent recovered recently. Similar to the previous condition, give the checkable a chance to
+			 *      recover after one of its dependencies recovered before sending a notification.
+			 *
+			 * If any of these conditions is not met, processing the suppressed notification is further delayed.
+			 */
+			if (!state_suppressed && GetStateType() == StateTypeHard && !IsLikelyToBeCheckedSoon() && !wasLastParentRecoveryRecent.Get()) {
+				if (NotificationReasonApplies(type)) {
+					Checkable::OnNotificationsRequested(this, type, cr, "", "", nullptr);
+				}
+				subtract |= NotificationRecovery|NotificationProblem;
+			}
+		}
+
+		for (auto type : {NotificationFlappingStart, NotificationFlappingEnd}) {
+			if (suppressed_types & type) {
+				bool still_applies = NotificationReasonApplies(type);
+
+				if (still_applies) {
+					if (!NotificationReasonSuppressed(type) && !IsLikelyToBeCheckedSoon() && !wasLastParentRecoveryRecent.Get()) {
+						Checkable::OnNotificationsRequested(this, type, GetLastCheckResult(), "", "", nullptr);
+
+						subtract |= type;
+					}
+				} else {
 					subtract |= type;
 				}
-			} else {
-				subtract |= type;
 			}
 		}
 	}
 
 	if (subtract) {
-		ObjectLock olock (checkable);
+		ObjectLock olock (this);
 
-		int suppressed_types_before (checkable->GetSuppressedNotifications());
+		int suppressed_types_before (GetSuppressedNotifications());
 		int suppressed_types_after (suppressed_types_before & ~subtract);
 
 		if (suppressed_types_after != suppressed_types_before) {
-			checkable->SetSuppressedNotifications(suppressed_types_after);
+			SetSuppressedNotifications(suppressed_types_after);
 		}
 	}
 }
@@ -231,13 +242,93 @@ static void FireSuppressedNotifications(Checkable* checkable)
 /**
  * Re-sends all notifications previously suppressed by e.g. downtimes if the notification reason still applies.
  */
-void Checkable::FireSuppressedNotifications(const Timer * const&)
+void Checkable::FireSuppressedNotificationsTimer(const Timer * const&)
 {
 	for (auto& host : ConfigType::GetObjectsByType<Host>()) {
-		::FireSuppressedNotifications(host.get());
+		host->FireSuppressedNotifications();
 	}
 
 	for (auto& service : ConfigType::GetObjectsByType<Service>()) {
-		::FireSuppressedNotifications(service.get());
+		service->FireSuppressedNotifications();
 	}
+}
+
+/**
+ * Returns whether sending a notification of type type right now would represent *this' current state correctly.
+ *
+ * @param type The type of notification to send (or not to send).
+ *
+ * @return Whether to send the notification.
+ */
+bool Checkable::NotificationReasonApplies(NotificationType type)
+{
+	switch (type) {
+		case NotificationProblem:
+			{
+				auto cr (GetLastCheckResult());
+				return cr && !IsStateOK(cr->GetState()) && cr->GetState() != GetStateBeforeSuppression();
+			}
+		case NotificationRecovery:
+			{
+				auto cr (GetLastCheckResult());
+				return cr && IsStateOK(cr->GetState()) && cr->GetState() != GetStateBeforeSuppression();
+			}
+		case NotificationFlappingStart:
+			return IsFlapping();
+		case NotificationFlappingEnd:
+			return !IsFlapping();
+		default:
+			VERIFY(!"Checkable#NotificationReasonStillApplies(): given type not implemented");
+			return false;
+	}
+}
+
+/**
+ * Checks if notifications of a given type should be suppressed for this Checkable at the moment.
+ *
+ * @param type The notification type for which to query the suppression status.
+ *
+ * @return true if no notification of this type should be sent.
+ */
+bool Checkable::NotificationReasonSuppressed(NotificationType type)
+{
+	switch (type) {
+		case NotificationProblem:
+		case NotificationRecovery:
+			return !IsReachable(DependencyNotification) || IsInDowntime() || IsAcknowledged();
+		case NotificationFlappingStart:
+		case NotificationFlappingEnd:
+			return IsInDowntime();
+		default:
+			return false;
+	}
+}
+
+/**
+ * E.g. we're going to re-send a stashed problem notification as *this is still not ok.
+ * But if the next check result recovers *this soon, we would send a recovery notification soon after the problem one.
+ * This is not desired, especially for lots of checkables at once.
+ * Because of that if there's likely to be a check result soon,
+ * we delay the re-sending of the stashed notification until the next check.
+ * That check either doesn't change anything and we finally re-send the stashed problem notification
+ * or recovers *this and we drop the stashed notification.
+ *
+ * @return Whether *this is likely to be checked soon
+ */
+bool Checkable::IsLikelyToBeCheckedSoon()
+{
+	if (!GetEnableActiveChecks()) {
+		return false;
+	}
+
+	// One minute unless the check interval is too short so the next check will always run during the next minute.
+	auto threshold (GetCheckInterval() - 10);
+
+	if (threshold > 60) {
+		threshold = 60;
+	} else if (threshold < 0) {
+		threshold = 0;
+	}
+
+	return GetNextCheck() <= Utility::GetTime() + threshold;
 }

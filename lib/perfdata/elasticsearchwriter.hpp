@@ -31,9 +31,10 @@ protected:
 private:
 	String m_EventPrefix;
 	WorkQueue m_WorkQueue{10000000, 1};
+	boost::signals2::connection m_HandleCheckResults, m_HandleStateChanges, m_HandleNotifications;
 	Timer::Ptr m_FlushTimer;
 	std::vector<String> m_DataBuffer;
-	boost::mutex m_DataBufferMutex;
+	std::mutex m_DataBufferMutex;
 
 	void AddCheckResult(const Dictionary::Ptr& fields, const Checkable::Ptr& checkable, const CheckResult::Ptr& cr);
 

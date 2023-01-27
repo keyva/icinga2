@@ -47,6 +47,7 @@ sepolicy manpage -p . -d icinga2_t
 # Fixing the file context on /usr/sbin/icinga2
 /sbin/restorecon -F -R -v /usr/sbin/icinga2
 /sbin/restorecon -F -R -v /usr/lib64/icinga2/sbin/icinga2
+/sbin/restorecon -F -R -v /usr/lib/icinga2/safe-reload
 # Fixing the file context on /etc/rc\.d/init\.d/icinga2
 #/sbin/restorecon -F -R -v /etc/rc\.d/init\.d/icinga2
 # Fixing the file context on /usr/lib/systemd/system/icinga2.*
@@ -66,6 +67,7 @@ sepolicy manpage -p . -d icinga2_t
 
 # Label the port 5665
 /sbin/semanage port -a -t icinga2_port_t -p tcp 5665
+/sbin/semanage port -a -t redis_port_t -p tcp 6380
 
 # Generate a rpm package for the newly generated policy
 pwd=$(pwd)

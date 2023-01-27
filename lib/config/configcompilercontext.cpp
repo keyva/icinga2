@@ -41,13 +41,16 @@ void ConfigCompilerContext::WriteObject(const Dictionary::Ptr& object)
 	String json = JsonEncode(object);
 
 	{
-		boost::mutex::scoped_lock lock(m_Mutex);
+		std::unique_lock<std::mutex> lock(m_Mutex);
 		NetString::WriteStringToStream(*m_ObjectsFP, json);
 	}
 }
 
 void ConfigCompilerContext::CancelObjectsFile()
 {
+	if (!m_ObjectsFP)
+		return;
+
 	delete m_ObjectsFP;
 	m_ObjectsFP = nullptr;
 
@@ -60,6 +63,9 @@ void ConfigCompilerContext::CancelObjectsFile()
 
 void ConfigCompilerContext::FinishObjectsFile()
 {
+	if (!m_ObjectsFP)
+		return;
+
 	delete m_ObjectsFP;
 	m_ObjectsFP = nullptr;
 

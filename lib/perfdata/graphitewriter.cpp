@@ -85,17 +85,20 @@ void GraphiteWriter::Resume()
 		<< "'" << GetName() << "' resumed.";
 
 	/* Register exception handler for WQ tasks. */
-	m_WorkQueue.SetExceptionCallback(std::bind(&GraphiteWriter::ExceptionHandler, this, _1));
+	m_WorkQueue.SetExceptionCallback([this](boost::exception_ptr exp) { ExceptionHandler(std::move(exp)); });
 
 	/* Timer for reconnecting */
 	m_ReconnectTimer = new Timer();
 	m_ReconnectTimer->SetInterval(10);
-	m_ReconnectTimer->OnTimerExpired.connect(std::bind(&GraphiteWriter::ReconnectTimerHandler, this));
+	m_ReconnectTimer->OnTimerExpired.connect([this](const Timer * const&) { ReconnectTimerHandler(); });
 	m_ReconnectTimer->Start();
 	m_ReconnectTimer->Reschedule(0);
 
 	/* Register event handlers. */
-	Checkable::OnNewCheckResult.connect(std::bind(&GraphiteWriter::CheckResultHandler, this, _1, _2));
+	m_HandleCheckResults = Checkable::OnNewCheckResult.connect([this](const Checkable::Ptr& checkable,
+		const CheckResult::Ptr& cr, const MessageOrigin::Ptr&) {
+		CheckResultHandler(checkable, cr);
+	});
 }
 
 /**
@@ -103,6 +106,7 @@ void GraphiteWriter::Resume()
  */
 void GraphiteWriter::Pause()
 {
+	m_HandleCheckResults.disconnect();
 	m_ReconnectTimer.reset();
 
 	try {
@@ -177,7 +181,7 @@ void GraphiteWriter::ReconnectInternal()
 {
 	double startTime = Utility::GetTime();
 
-	CONTEXT("Reconnecting to Graphite '" + GetName() + "'");
+	CONTEXT("Reconnecting to Graphite '" << GetName() << "'");
 
 	SetShouldConnect(true);
 
@@ -216,7 +220,7 @@ void GraphiteWriter::ReconnectTimerHandler()
 	if (IsPaused())
 		return;
 
-	m_WorkQueue.Enqueue(std::bind(&GraphiteWriter::Reconnect, this), PriorityHigh);
+	m_WorkQueue.Enqueue([this]() { Reconnect(); }, PriorityHigh);
 }
 
 /**
@@ -257,7 +261,7 @@ void GraphiteWriter::CheckResultHandler(const Checkable::Ptr& checkable, const C
 	if (IsPaused())
 		return;
 
-	m_WorkQueue.Enqueue(std::bind(&GraphiteWriter::CheckResultHandlerInternal, this, checkable, cr));
+	m_WorkQueue.Enqueue([this, checkable, cr]() { CheckResultHandlerInternal(checkable, cr); });
 }
 
 /**
@@ -272,7 +276,7 @@ void GraphiteWriter::CheckResultHandlerInternal(const Checkable::Ptr& checkable,
 {
 	AssertOnWorkQueue();
 
-	CONTEXT("Processing check result for '" + checkable->GetName() + "'");
+	CONTEXT("Processing check result for '" << checkable->GetName() << "'");
 
 	/* TODO: Deal with missing connection here. Needs refactoring
 	 * into parsing the actual performance data and then putting it
@@ -294,9 +298,13 @@ void GraphiteWriter::CheckResultHandlerInternal(const Checkable::Ptr& checkable,
 	String prefix;
 
 	if (service) {
-		prefix = MacroProcessor::ResolveMacros(GetServiceNameTemplate(), resolvers, cr, nullptr, std::bind(&GraphiteWriter::EscapeMacroMetric, _1));
+		prefix = MacroProcessor::ResolveMacros(GetServiceNameTemplate(), resolvers, cr, nullptr, [](const Value& value) -> Value {
+			return EscapeMacroMetric(value);
+		});
 	} else {
-		prefix = MacroProcessor::ResolveMacros(GetHostNameTemplate(), resolvers, cr, nullptr, std::bind(&GraphiteWriter::EscapeMacroMetric, _1));
+		prefix = MacroProcessor::ResolveMacros(GetHostNameTemplate(), resolvers, cr, nullptr, [](const Value& value) -> Value {
+			return EscapeMacroMetric(value);
+		});
 	}
 
 	String prefixPerfdata = prefix + ".perfdata";
@@ -398,7 +406,7 @@ void GraphiteWriter::SendMetric(const Checkable::Ptr& checkable, const String& p
 	// do not send \n to debug log
 	msgbuf << "\n";
 
-	boost::mutex::scoped_lock lock(m_StreamMutex);
+	std::unique_lock<std::mutex> lock(m_StreamMutex);
 
 	if (!GetConnected())
 		return;

@@ -53,10 +53,13 @@ void PerfdataWriter::Resume()
 	Log(LogInformation, "PerfdataWriter")
 		<< "'" << GetName() << "' resumed.";
 
-	Checkable::OnNewCheckResult.connect(std::bind(&PerfdataWriter::CheckResultHandler, this, _1, _2));
+	m_HandleCheckResults = Checkable::OnNewCheckResult.connect([this](const Checkable::Ptr& checkable,
+		const CheckResult::Ptr& cr, const MessageOrigin::Ptr&) {
+		CheckResultHandler(checkable, cr);
+	});
 
 	m_RotationTimer = new Timer();
-	m_RotationTimer->OnTimerExpired.connect(std::bind(&PerfdataWriter::RotationTimerHandler, this));
+	m_RotationTimer->OnTimerExpired.connect([this](const Timer * const&) { RotationTimerHandler(); });
 	m_RotationTimer->SetInterval(GetRotationInterval());
 	m_RotationTimer->Start();
 
@@ -66,6 +69,7 @@ void PerfdataWriter::Resume()
 
 void PerfdataWriter::Pause()
 {
+	m_HandleCheckResults.disconnect();
 	m_RotationTimer.reset();
 
 #ifdef I2_DEBUG
@@ -95,7 +99,7 @@ void PerfdataWriter::CheckResultHandler(const Checkable::Ptr& checkable, const C
 	if (IsPaused())
 		return;
 
-	CONTEXT("Writing performance data for object '" + checkable->GetName() + "'");
+	CONTEXT("Writing performance data for object '" << checkable->GetName() << "'");
 
 	if (!IcingaApplication::GetInstance()->GetEnablePerfdata() || !checkable->GetEnablePerfdata())
 		return;
@@ -118,7 +122,7 @@ void PerfdataWriter::CheckResultHandler(const Checkable::Ptr& checkable, const C
 		String line = MacroProcessor::ResolveMacros(GetServiceFormatTemplate(), resolvers, cr, nullptr, &PerfdataWriter::EscapeMacroMetric);
 
 		{
-			boost::mutex::scoped_lock lock(m_StreamMutex);
+			std::unique_lock<std::mutex> lock(m_StreamMutex);
 
 			if (!m_ServiceOutputFile.good())
 				return;
@@ -129,7 +133,7 @@ void PerfdataWriter::CheckResultHandler(const Checkable::Ptr& checkable, const C
 		String line = MacroProcessor::ResolveMacros(GetHostFormatTemplate(), resolvers, cr, nullptr, &PerfdataWriter::EscapeMacroMetric);
 
 		{
-			boost::mutex::scoped_lock lock(m_StreamMutex);
+			std::unique_lock<std::mutex> lock(m_StreamMutex);
 
 			if (!m_HostOutputFile.good())
 				return;
@@ -144,7 +148,7 @@ void PerfdataWriter::RotateFile(std::ofstream& output, const String& temp_path, 
 	Log(LogDebug, "PerfdataWriter")
 		<< "Rotating perfdata files.";
 
-	boost::mutex::scoped_lock lock(m_StreamMutex);
+	std::unique_lock<std::mutex> lock(m_StreamMutex);
 
 	if (output.good()) {
 		output.close();

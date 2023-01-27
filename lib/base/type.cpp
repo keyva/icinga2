@@ -15,7 +15,7 @@ INITIALIZE_ONCE_WITH_PRIORITY([]() {
 	type->SetPrototype(TypeType::GetPrototype());
 	Type::TypeInstance = type;
 	Type::Register(type);
-}, 20);
+}, InitializePriority::RegisterTypeType);
 
 String Type::ToString() const
 {
@@ -24,7 +24,7 @@ String Type::ToString() const
 
 void Type::Register(const Type::Ptr& type)
 {
-	ScriptGlobal::Set("Types." + type->GetName(), type, true);
+	ScriptGlobal::Set("Types." + type->GetName(), type);
 }
 
 Type::Ptr Type::GetByName(const String& name)
@@ -54,7 +54,7 @@ std::vector<Type::Ptr> Type::GetAllTypes()
 		ObjectLock olock(typesNS);
 
 		for (const Namespace::Pair& kv : typesNS) {
-			Value value = kv.second->Get();
+			Value value = kv.second.Val;
 
 			if (value.IsObjectType<Type>())
 				types.push_back(value);
@@ -136,9 +136,10 @@ Value Type::GetField(int id) const
 	BOOST_THROW_EXCEPTION(std::runtime_error("Invalid field ID."));
 }
 
-std::vector<String> Type::GetLoadDependencies() const
+const std::unordered_set<Type*>& Type::GetLoadDependencies() const
 {
-	return std::vector<String>();
+	static const std::unordered_set<Type*> noDeps;
+	return noDeps;
 }
 
 int Type::GetActivationPriority() const

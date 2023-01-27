@@ -62,7 +62,7 @@ By default this template is automatically imported into all [EventCommand](09-ob
 
 ### legacy-timeperiod <a id="itl-legacy-timeperiod"></a>
 
-Timeperiod template for [Timeperiod objects](09-object-types.md#objecttype-timeperiod).
+Timeperiod template for [TimePeriod objects](09-object-types.md#objecttype-timeperiod).
 
 The `legacy-timeperiod` timeperiod does not support any vars.
 
@@ -102,6 +102,24 @@ Name                   | Description
 cluster\_zone          | **Required.** The zone name. Defaults to `$host.name$`.
 cluster\_lag\_warning  | **Optional.** Warning threshold for log lag in seconds. Applies if the log lag is greater than the threshold.
 cluster\_lag\_critical | **Optional.** Critical threshold for log lag in seconds. Applies if the log lag is greater than the threshold.
+
+### icingadb <a id="itl-icinga-icingadb"></a>
+
+Check command for the built-in `icingadb` check.
+
+Custom variables passed as [command parameters](03-monitoring-basics.md#command-passing-parameters):
+
+Name                                     | Description
+-----------------------------------------|-----------------------------
+icingadb\_name                           | **Required.** The name of the Icinga DB connection object. Defaults to `icingadb`.
+icingadb\_full\_dump\_duration\_warning  | **Optional.** Warning threshold for ongoing Redis dump duration. Applies if the value is higher than the threshold. Defaults to 5 minutes.
+icingadb\_full\_dump\_duration\_critical | **Optional.** Critical threshold for ongoing Redis dump duration. Applies if the value is higher than the threshold. Defaults to 10 minutes.
+icingadb\_full\_sync\_duration\_warning  | **Optional.** Warning threshold for ongoing database sync duration. Applies if the value is higher than the threshold. Defaults to 5 minutes.
+icingadb\_full\_sync\_duration\_critical | **Optional.** Critical threshold for ongoing database sync duration. Applies if the value is higher than the threshold. Defaults to 10 minutes.
+icingadb\_redis\_backlog\_warning        | **Optional.** Warning threshold for Redis write backlog. Applies if the value is higher than the threshold. Defaults to 5 minutes.
+icingadb\_redis\_backlog\_critical       | **Optional.** Critical threshold for Redis write backlog. Applies if the value is higher than the threshold. Defaults to 15 minutes.
+icingadb\_database\_backlog\_warning     | **Optional.** Warning threshold for database sync backlog. Applies if the value is higher than the threshold. Defaults to 5 minutes.
+icingadb\_database\_backlog\_critical    | **Optional.** Critical threshold for database sync backlog. Applies if the value is higher than the threshold. Defaults to 15 minutes.
 
 ### ido <a id="itl-icinga-ido"></a>
 
@@ -359,6 +377,7 @@ disk\_timeout             | **Optional.** Seconds before connection times out (d
 disk\_units               | **Optional.** Choose bytes, kB, MB, GB, TB (default: MB).
 disk\_exclude\_type       | **Optional.** Ignore all filesystems of indicated type. Multiple regular expression strings must be defined as array. Defaults to "none", "tmpfs", "sysfs", "proc", "configfs", "devtmpfs", "devfs", "mtmfs", "tracefs", "cgroup", "fuse.gvfsd-fuse", "fuse.gvfs-fuse-daemon", "fdescfs", "overlay", "nsfs", "squashfs".
 disk\_include\_type       | **Optional.** Check only filesystems of indicated type. Multiple regular expression strings must be defined as array.
+disk\_inode\_perfdata     | **Optional.** Display inode usage in perfdata
 
 ### disk_smb <a id="plugin-check-command-disk-smb"></a>
 
@@ -392,8 +411,9 @@ Name                 | Description
 ---------------------|--------------
 dns_lookup           | **Optional.** The hostname or IP to query the DNS for. Defaults to "$host_name$".
 dns_server           | **Optional.** The DNS server to query. Defaults to the server configured in the OS.
-dns_query_type       | **Optional.** The DNS record query type where TYPE =(A, AAAA, SRV, TXT, MX, ANY). The default query type is 'A' (IPv4 host entry)
-dns_expected_answers | **Optional.** The answer(s) to look for. A hostname must end with a dot. Multiple answers must be defined as array.
+dns_query_type       | **Optional.** The DNS record query type where TYPE =(A, AAAA, SRV, TXT, MX, ANY). The default query type is 'A' (IPv4 host entry). **Only supported by the Nagios plugins version of check\_dns, not by the monitoring plugins one.**
+dns_expected_answers | **Optional.** The answer(s) to look for. A hostname must end with a dot. Format depends on the monitoring-plugins version: In version 2.2 and before, a single string with the values alphabetically ordered and joined by commas. In version 2.3 and later, multiple answers must be defined as array.
+dns_all_expected     | **Optional.** Denotes whether to require all values passed in `dns_expected_answers` to pass, or at least one. Only supported in newer versions of monitoring-plugins (2.3 and later), and is needed in such versions to replicate behaviour of previous versions of the plugins.
 dns_authoritative    | **Optional.** Expect the server to send an authoritative answer.
 dns_accept_cname     | **Optional.** Accept cname responses as a valid result to a query.
 dns_wtime            | **Optional.** Return warning if elapsed time exceeds value.
@@ -655,7 +675,7 @@ http_method                      | **Optional.** Set http method (for example: H
 http_maxage                      | **Optional.** Warn if document is more than seconds old.
 http_contenttype                 | **Optional.** Specify Content-Type header when POSTing.
 http_useragent                   | **Optional.** String to be sent in http header as User Agent.
-http_header                      | **Optional.** Any other tags to be sent in http header.
+http_header                      | **Optional.** Any other tags to be sent in http header. Can be an array if multiple headers should be passed to `check_http`.
 http_extendedperfdata            | **Optional.** Print additional perfdata. Defaults to false.
 http_onredirect                  | **Optional.** How to handle redirect pages. Possible values: "ok" (default), "warning", "critical", "follow", "sticky" (like follow but stick to address), "stickyport" (like sticky but also to port)
 http_pagesize                    | **Optional.** Minimum page size required:Maximum page size required.
@@ -680,9 +700,9 @@ Name            | Description
 ----------------|--------------
 icmp_address    | **Optional.** The host's address. This can either be a single address or an array of addresses. Defaults to "$address$".
 icmp_wrta       | **Optional.** The RTA warning threshold in milliseconds. Defaults to 100.
-icmp_wpl        | **Optional.** The packet loss warning threshold in %. Defaults to 5.
+icmp_wpl        | **Optional.** The packet loss warning threshold in %. Defaults to 10.
 icmp_crta       | **Optional.** The RTA critical threshold in milliseconds. Defaults to 200.
-icmp_cpl        | **Optional.** The packet loss critical threshold in %. Defaults to 15.
+icmp_cpl        | **Optional.** The packet loss critical threshold in %. Defaults to 30.
 icmp_source     | **Optional.** The source IP address to send packets from.
 icmp_packets    | **Optional.** The number of packets to send. Defaults to 5.
 icmp_packet_interval | **Optional** The maximum packet interval. Defaults to 80 (milliseconds).
@@ -795,6 +815,7 @@ Custom variables passed as [command parameters](03-monitoring-basics.md#command-
 
 Name			| Description
 ------------------------|---------------------------------------------------------------
+mysql_extra_opts	| **Optional.** Read options from an ini file.
 mysql_hostname		| **Optional.** Host name, IP Address, or unix socket (must be an absolute path).
 mysql_port		| **Optional.** Port number (default: 3306).
 mysql_socket		| **Optional.** Use the specified socket (has no effect if `mysql_hostname` is used).
@@ -879,7 +900,16 @@ nrpe_timeout    | **Optional.** The timeout in seconds.
 nrpe_arguments	| **Optional.** Arguments that should be passed to the command. Multiple arguments must be defined as array.
 nrpe_ipv4       | **Optional.** Use IPv4 connection. Defaults to false.
 nrpe_ipv6       | **Optional.** Use IPv6 connection. Defaults to false.
-nrpe_version_2	| **Optional.** Use this if you want to connect using NRPE v2 protocol. Defaults to false.
+nrpe_version_2	| **Optional.** Use this if you want to connect using NRPE v2 protocol (needed for NSClient++). Defaults to false.
+nrpe_version_3	| **Optional.** Use this if you want to connect using NRPE v3 protocol. Defaults to false.
+nrpe_payload_size	| **Optional.** Specify non-default payload size for NSClient++. Default is 1024.
+nrpe_ca		| **Optional.** The CA file to use for PKI. Defaults to none.
+nrpe_cert	| **Optional.** The client cert file to use for PKI. Defaults to none.
+nrpe_key	| **Optional.** The client key file to use for PKI. Defaults to none.
+nrpe_ssl_version	| **Optional.** The SSL/TLS version to use. Defaults to TLSv1+.
+nrpe_cipher_list	| **Optional.** The list of SSL ciphers to use. Default depends on check_nrpe version.
+nrpe_dh_opt	| **Optional.** Anonymous Diffie Hellman use: 0 = deny, 1 = allow, 2 = force. Default depends on check_nrpe version.
+nrpe_no_logging	| **Optional.** Disable logging of check_nrpe to syslog facilities (requires check_nrpe >= 4.0).
 
 
 ### nscp <a id="plugin-check-command-nscp"></a>
@@ -963,6 +993,7 @@ Custom variables passed as [command parameters](03-monitoring-basics.md#command-
 
 Name			| Description
 ------------------------|---------------------------------------------------------------
+pgsql_extra_opts	| **Optional.** Read options from an ini file.
 pgsql_hostname		| **Optional.** Host name, IP Address, or unix socket (must be an absolute path).
 pgsql_port		| **Optional.** Port number (default: 5432).
 pgsql_database		| **Optional.** Database to check (default: template1).
@@ -1353,7 +1384,7 @@ ssl_port                      | **Optional.** The port that should be checked. D
 ssl_timeout                   | **Optional.** Timeout in seconds for the connect and handshake. The plugin default is 10 seconds.
 ssl_cert_valid_days_warn      | **Optional.** Warning threshold for days before the certificate will expire. When used, the default for ssl_cert_valid_days_critical is 0.
 ssl_cert_valid_days_critical  | **Optional.** Critical threshold for days before the certificate will expire. When used, ssl_cert_valid_days_warn must also be set.
-ssl_sni                       | **Optional.** The `server_name` that is send to select the SSL certificate to check. Important if SNI is used.
+ssl_sni                       | **Optional.** The `server_name` that is sent to select the SSL certificate to check. Important if SNI is used.
 
 
 ### ssmtp <a id="plugin-check-command-ssmtp"></a>
@@ -1426,6 +1457,7 @@ tcp_maxbytes    | **Optional.** Close connection once more than this number of b
 tcp_delay       | **Optional.** Seconds to wait between sending string and polling for response.
 tcp_certificate | **Optional.** Minimum number of days a certificate has to be valid. 1st value is number of days for warning, 2nd is critical (if not specified: 0) -- separated by comma.
 tcp_ssl         | **Optional.** Use SSL for the connection. Defaults to false.
+tcp_sni         | **Optional.** Hostname to send in the `server_name` (SNI) SSL/TLS extension.
 tcp_wtime       | **Optional.** Response time to result in warning status (seconds).
 tcp_ctime       | **Optional.** Response time to result in critical status (seconds).
 tcp_timeout     | **Optional.** Seconds before connection times out. Defaults to 10.
@@ -1502,6 +1534,13 @@ uptime_since    | **Optional.** Show last boot in yyyy-mm-dd HH:MM:SS format (ou
 
 
 ## Windows Plugins for Icinga 2 <a id="windows-plugins"></a>
+
+> **Note**
+>
+> These plugins are DEPRECATED in favor of our
+> [PowerShell Plugins](https://github.com/Icinga/icinga-powershell-plugins)
+> and may be removed in a future release.
+> Check the [roadmap](https://github.com/Icinga/icinga2/milestones).
 
 To allow a basic monitoring of Windows clients Icinga 2 comes with a set of Windows only plugins. While trying to mirror the functionalities of their linux cousins from the monitoring-plugins package, the differences between Windows and Linux are too big to be able use the same CheckCommands for both systems.
 
@@ -2159,6 +2198,7 @@ snmp_interface_ifalias      | **Optional.** Switch from IF-MIB::ifDescr to IF-MI
 snmp_interface_weathermap   | **Optional.** Output data for ["weathermap" lines](http://docs.nagvis.org/1.9/en_US/lines_weathermap_style.html) in NagVis. **Depends** on `snmp_interface_perf` set to true. Defaults to `false`. **Note**: Available in `check_snmp_int.pl v2.1.0`.
 snmp_perf                   | **Optional.** Enable perfdata values. Defaults to true.
 snmp_timeout                | **Optional.** The command timeout in seconds. Defaults to 5 seconds.
+snmp_interface_admin        | **Optional.** Use administrative status instead of operational. Defaults to false.
 
 ### snmp-process <a id="plugin-check-command-snmp-process"></a>
 
@@ -2186,6 +2226,7 @@ snmp_process_name          | **Optional.** Name of the process (regexp). No trai
 snmp_perf                  | **Optional.** Enable perfdata values. Defaults to true.
 snmp_timeout               | **Optional.** The command timeout in seconds. Defaults to 5 seconds.
 snmp_process_use_params    | **Optional.** Add process parameters to process name for regexp matching. Example: "named.*-t /var/named/chroot" will only select named process with this parameter. Defaults to false.
+snmp_process_use_fullpath  | **Optional.** Use full path name instead of process name to select processes. Example: "/opt/app1/app1bin" will only select named process with this full path. Defaults to false.
 snmp_process_mem_usage     | **Optional.** Define to check memory usage for the process. Defaults to false.
 snmp_process_mem_threshold | **Optional.** Defines the warning and critical thresholds in Mb when snmp_process_mem_usage set to true. Example "512,1024". Defaults to "0,0".
 snmp_process_cpu_usage     | **Optional.** Define to check CPU usage for the process. Defaults to false.
@@ -2326,7 +2367,7 @@ db2_health_env_db2_version    | **Optional.** Specifies the DB2 version as envir
 #### mssql_health <a id="plugin-contrib-command-mssql_health"></a>
 
 The [check_mssql_health](https://labs.consol.de/nagios/check_mssql_health/index.html) plugin
-uses the `DBD::Sybase` Perl library based on [FreeTDS](http://www.freetds.org/) to monitor a
+uses the `DBD::Sybase` Perl library based on [FreeTDS](https://www.freetds.org/) to monitor a
 [MS SQL](https://www.microsoft.com/en-us/sql-server/) server.
 
 The Git repository is located on [GitHub](https://github.com/lausser/check_mssql_health).
@@ -2470,26 +2511,30 @@ Custom variables passed as [command parameters](03-monitoring-basics.md#command-
 
 Name                             | Description
 ---------------------------------|------------------------------------------------------------------------------------------------------------------------------
-postgres_host        | **Optional.** Specifies the database hostname or address. Defaults to "$address$" or "$address6$" if the `address` attribute is not set. If "postgres_unixsocket" is set to true, falls back to unix socket.
-postgres_port        | **Optional.** Specifies the database port. Defaults to 5432.
-postgres_dbname      | **Optional.** Specifies the database name to connect to. Defaults to "postgres" or "template1".
-postgres_dbuser      | **Optional.** The username for the database connection. Defaults to "postgres".
-postgres_dbpass      | **Optional.** The password for the database connection. You can use a .pgpass file instead.
-postgres_dbservice   | **Optional.** Specifies the service name to use inside of pg_service.conf.
-postgres_warning     | **Optional.** Specifies the warning threshold, range depends on the action.
-postgres_critical    | **Optional.** Specifies the critical threshold, range depends on the action.
-postgres_include     | **Optional.** Specifies name(s) items to specifically include (e.g. tables), depends on the action.
-postgres_exclude     | **Optional.** Specifies name(s) items to specifically exclude (e.g. tables), depends on the action.
-postgres_includeuser | **Optional.** Include objects owned by certain users.
-postgres_excludeuser | **Optional.** Exclude objects owned by certain users.
-postgres_standby     | **Optional.** Assume that the server is in continuous WAL recovery mode if set to true. Defaults to false.
-postgres_production  | **Optional.** Assume that the server is in production mode if set to true. Defaults to false.
-postgres_action      | **Required.** Determines the test executed.
-postgres_unixsocket  | **Optional.** If "postgres_unixsocket" is set to true, the unix socket is used instead of an address. Defaults to false.
-postgres_query       | **Optional.** Query for "custom_query" action.
-postgres_valtype     | **Optional.** Value type of query result for "custom_query".
-postgres_reverse     | **Optional.** If "postgres_reverse" is set, warning and critical values are reversed for "custom_query" action.
-postgres_tempdir     | **Optional.** Specify directory for temporary files. The default directory is dependent on the OS. More details [here](https://perldoc.perl.org/File/Spec.html).
+postgres_host          | **Optional.** Specifies the database hostname or address. Defaults to "$address$" or "$address6$" if the `address` attribute is not set. If "postgres_unixsocket" is set to true, falls back to unix socket.
+postgres_port          | **Optional.** Specifies the database port. Defaults to 5432.
+postgres_dbname        | **Optional.** Specifies the database name to connect to. Defaults to "postgres" or "template1".
+postgres_dbuser        | **Optional.** The username for the database connection. Defaults to "postgres".
+postgres_dbpass        | **Optional.** The password for the database connection. You can use a .pgpass file instead.
+postgres_dbservice     | **Optional.** Specifies the service name to use inside of pg_service.conf.
+postgres_warning       | **Optional.** Specifies the warning threshold, range depends on the action.
+postgres_critical      | **Optional.** Specifies the critical threshold, range depends on the action.
+postgres_include       | **Optional.** Specifies name(s) items to specifically include (e.g. tables), depends on the action.
+postgres_exclude       | **Optional.** Specifies name(s) items to specifically exclude (e.g. tables), depends on the action.
+postgres_includeuser   | **Optional.** Include objects owned by certain users.
+postgres_excludeuser   | **Optional.** Exclude objects owned by certain users.
+postgres_standby       | **Optional.** Assume that the server is in continuous WAL recovery mode if set to true. Defaults to false.
+postgres_production    | **Optional.** Assume that the server is in production mode if set to true. Defaults to false.
+postgres_action        | **Required.** Determines the test executed.
+postgres_unixsocket    | **Optional.** If "postgres_unixsocket" is set to true, the unix socket is used instead of an address. Defaults to false.
+postgres_query         | **Optional.** Query for "custom_query" action.
+postgres_valtype       | **Optional.** Value type of query result for "custom_query".
+postgres_reverse       | **Optional.** If "postgres_reverse" is set, warning and critical values are reversed for "custom_query" action.
+postgres_tempdir       | **Optional.** Specify directory for temporary files. The default directory is dependent on the OS. More details [here](https://perldoc.perl.org/File/Spec.html).
+postgres_datadir       | **Optional.** Specifies the database directory (PGDATA). This information is required for some actions, such as "bloat", "locks" and "prepared_txns".
+postgres_language      | **Optional.** Specifies the language for messages issued by the plugin. The default language depends on the system configuration.
+postgres_perflimit     | **Optional.** Specifies the maximum number of performance data values returned by the plugin. The default is to return all performance data.
+postgres_pgcontroldata | **Optional.** Full path to the pg_controldata command line utility, e.g. "/usr/pgsql-12/bin/pg_controldata".
 
 #### mongodb <a id="plugin-contrib-command-mongodb"></a>
 
@@ -2514,6 +2559,7 @@ mongodb_perfdata                 | **Optional.** Enable output of Nagios perform
 mongodb_database                 | **Optional.** Specify the database to check.
 mongodb_alldatabases             | **Optional.** Check all databases (action database_size).
 mongodb_ssl                      | **Optional.** Connect using SSL.
+mongodb_ssl_ca_cert_file         | **Optional.** Path to certificate authority file for SSL.
 mongodb_replicaset               | **Optional.** Connect to replicaset.
 mongodb_replcheck                | **Optional.** If set to true, will enable the mongodb_replicaset value needed for "replica_primary" check.
 mongodb_querytype                | **Optional.** The query type to check [query\|insert\|update\|delete\|getmore\|command] from queries_per_second.
@@ -2818,6 +2864,11 @@ icingacli_businessprocess_process         | **Required.** Business process to mo
 icingacli_businessprocess_config          | **Optional.** Configuration file containing your business process without file extension.
 icingacli_businessprocess_details         | **Optional.** Get details for root cause analysis. Defaults to false.
 icingacli_businessprocess_statetype       | **Optional.** Define which state type to look at, `soft` or `hard`. Overrides the default value inside the businessprocess module, if configured.
+icingacli_businessprocess_ackisok         | **Optional.** Treat acknowledged hosts/services always as UP/OK.
+icingacli_businessprocess_blame           | **Optional.** Show problem details as a tree reduced to the nodes which have the same state as the business process.
+icingacli_businessprocess_colors          | **Optional.** Show colored output.
+icingacli_businessprocess_downtimeisok    | **Optional.** Treat hosts/services in downtime always as UP/OK.
+icingacli_businessprocess_rootcause       | **Optional.** Used in combination with *icingacli_businessprocess_blame*. Only shows the paths of the nodes which are responsible for the state of the business process.
 
 #### Director <a id="plugin-contrib-icingacli-director"></a>
 
@@ -2893,6 +2944,8 @@ ipmi_sensor_id                   | **Optional.** Include sensor matching ipmi_se
 ipmi_protocol_lan_version        | **Optional.** Change the protocol LAN version. Defaults to "LAN_2_0".
 ipmi_number_of_active_fans       | **Optional.** Number of fans that should be active. Otherwise a WARNING state is returned.
 ipmi_show_fru                    | **Optional.** Print the product serial number if it is available in the IPMI FRU data.
+ipmi_show_assettag               | **Optional.** Print the assettag if it is available in the IPMI FRU data. (--fru is mandatory)
+ipmi_show_board                  | **Optional.** Print additional motherboard informations if it is available in the IPMI FRU data. (--fru is mandatory)
 ipmi_no_sel_checking             | **Optional.** Turn off system event log checking via ipmi-sel.
 ipmi_no_thresholds               | **Optional.** Turn off performance data thresholds from output-sensor-thresholds.
 ipmi_verbose                     | **Optional.** Be Verbose multi line output, also with additional details for warnings.
@@ -2922,7 +2975,7 @@ This category includes all plugins for log management, for example [Logstash](ht
 
 #### logstash <a id="plugins-contrib-command-logstash"></a>
 
-The [logstash](https://github.com/widhalmt/check_logstash) plugin connects to
+The [logstash](https://github.com/NETWAYS/check_logstash) plugin connects to
 the Node API of Logstash. This plugin requires at least Logstash version 5.0.x.
 
 The Node API is not activated by default. You have to configure your Logstash
@@ -3146,6 +3199,19 @@ interfaces_timeout        | **Optional.** Sets the SNMP timeout (in ms).
 interfaces_sleep          | **Optional.** Sleep between every SNMP query (in ms).
 interfaces_names          | **Optional.** If set to true, use ifName instead of ifDescr.
 
+#### linux\_netdev <a id="plugin-contrib-command-linux_netdev"></a>
+
+The [check\_linux\_netdev](https://github.com/Al2Klimov/check_linux_netdev)
+plugin monitors a Linux system's network device statistics via `/proc/net/dev`.
+
+Custom variables passed as [command parameters](03-monitoring-basics.md#command-passing-parameters):
+
+Name                      | Description
+--------------------------|---------------------------------------------------------
+linux\_netdev\_duration   | **Optional.** For how long to run. E.g. "10s" or "2m". Default: "1m"
+linux\_netdev\_exclude    | **Optional.** Which NICs to exclude. E.g. `eth0` or `eth?*`, may be an array. Default: none
+linux\_netdev\_thresholds | **Optional.** Warning and critical thresholds. E.g. `eth?*:tx:bytes:persec:w=1000000000` (see [plugin documentation](https://github.com/Al2Klimov/check_linux_netdev#usage)), may be an array. Default: none
+
 #### nwc_health <a id="plugin-contrib-command-nwc_health"></a>
 
 The [check_nwc_health](https://labs.consol.de/de/nagios/check_nwc_health/index.html) plugin
@@ -3260,6 +3326,147 @@ printer_health_oids		| **Optional.** A list of oids which are downloaded and wri
 printer_health_offline		| **Optional.** The maximum number of seconds since the last update of cache file before it is considered too old.
 printer_health_multiline	| **Optional.** Multiline output
 
+#### Thola <a id="plugin-contrib-command-thola"></a>
+
+The [Thola](https://thola.io) plugin
+is a tool for monitoring network devices, that mainly uses SNMP.
+
+To run these commands you need a server that is running the Thola API.
+If you don't know how to do this, you can have a look at the plugin's
+[documentation](https://docs.thola.io). Also, you have to
+put the Thola-client binary into the `PluginContribDir`.
+
+##### thola-cpu-load <a id="plugin-contrib-command-thola-cpu-load"></a>
+
+Checks the CPU load of a network device.
+
+Custom variables passed as [command parameters](03-monitoring-basics.md#command-passing-parameters):
+
+Name                           | Description
+-------------------------------|--------------------------------------------------------
+thola_api_address              | **Required.** Address of the Thola API to connect to
+thola_device_address           | **Required.** The host's address. Defaults to "$address$" if the host's address attribute is set, “$address6$” otherwise.
+thola_device_snmp_community    | **Optional.** SNMP community of the device
+thola_device_snmp_protocol     | **Optional.** SNMP version to use
+thola_cpu_load_critical        | **Optional.** Critical threshold for the CPU load in %
+thola_cpu_load_warning         | **Optional.** Warning threshold for the CPU load in %
+
+##### thola-interface-metrics <a id="plugin-contrib-command-thola-interface-metrics"></a>
+
+Checks the interface metrics of a network device.
+
+Custom variables passed as [command parameters](03-monitoring-basics.md#command-passing-parameters):
+
+Name                            | Description
+--------------------------------|-----------------------------------------------------
+thola_api_address               | **Required.** Address of the Thola API to connect to
+thola_device_address            | **Required.** The host's address. Defaults to "$address$" if the host's address attribute is set, “$address6$” otherwise
+thola_device_snmp_community     | **Optional.** SNMP community of the device
+
+##### thola-hardware-health <a id="plugin-contrib-command-thola-hardware-health"></a>
+
+Checks the hardware health of a network device.
+
+Custom variables passed as [command parameters](03-monitoring-basics.md#command-passing-parameters):
+
+Name                          | Description
+------------------------------|-----------------------------------------------------
+thola_api_address             | **Required.** Address of the Thola API to connect to
+thola_device_address          | **Required.** The host's address. Defaults to "$address$" if the host's address attribute is set, “$address6$” otherwise
+thola_device_snmp_community   | **Optional.** SNMP community of the device
+
+##### thola-identify <a id="plugin-contrib-command-thola-identify"></a>
+
+Checks if a device can be identified by the given properties.
+
+Custom variables passed as [command parameters](03-monitoring-basics.md#command-passing-parameters):
+
+Name                               | Description
+-----------------------------------|--------------------------------------------------------------------------------
+thola_api_address                  | **Required.** Address of the Thola API to connect to
+thola_device_address               | **Required.** The host's address. Defaults to "$address$" if the host's address attribute is set, “$address6$” otherwise
+thola_device_snmp_community        | **Optional.** SNMP community of the device
+thola_identify_model               | **Optional.** Model that is compared to the actual model of the device
+thola_identify_os_version          | **Optional.** OS-version that is compared to the actual OS-version of the device
+thola_identify_vendor              | **Optional.** Vendor that is compared to the actual vendor of the device
+thola_identify_serial_number       | **Optional.** Serial number that is compared to the actual serial number of the device
+thola_identify_discover_retries    | **Optional.** The number of discover retries before aborting
+thola_identify_discover_timeouts   | **Optional.** The number of discover timeouts before aborting
+
+> **Note**:
+>
+> One of the variables `thola_identify_model`, `thola_identify_os_version`, 
+> `thola_identify_vendor` or `thola_identify_serial_number` must be set
+
+##### thola-memory-usage <a id="plugin-contrib-command-thola-memory-usage"></a>
+
+Checks the memory usage of a device.
+
+Custom variables passed as [command parameters](03-monitoring-basics.md#command-passing-parameters):
+
+Name                           | Description
+-------------------------------|-----------------------------------------------------
+thola_api_address              | **Required.** Address of the Thola API to connect to
+thola_device_address           | **Required.** The host's address. Defaults to "$address$" if the host's address attribute is set, “$address6$” otherwise
+thola_device_snmp_community    | **Optional.** SNMP community of the device
+thola_memory_usage_critical    | **Optional.** Critical threshold for the memory usage in %
+thola_memory_usage_warning     | **Optional.** Warning threshold for the memory usage in %
+
+##### thola-sbc <a id="plugin-contrib-command-thola-sbc"></a>
+
+Checks special metrics from sbc network devices.
+
+Custom variables passed as [command parameters](03-monitoring-basics.md#command-passing-parameters):
+
+Name                                     | Description
+-----------------------------------------|-----------------------------------------------------------
+thola_api_address                        | **Required.** Address of the Thola API to connect to
+thola_device_address                     | **Required.** The host's address. Defaults to "$address$" if the host's address attribute is set, “$address6$” otherwise
+thola_device_snmp_community              | **Optional.** SNMP community of the device
+thola_sbc_system_health_score_critical   | **Optional.** Critical threshold for the health score in %
+thola_sbc_system_health_score_warning    | **Optional.** Warning threshold for the health score in %
+
+##### thola-thola-server <a id="plugin-contrib-command-thola-thola-server"></a>
+
+Checks if a Thola API is running on a given server.
+
+Custom variables passed as [command parameters](03-monitoring-basics.md#command-passing-parameters):
+
+Name                | Description
+--------------------|-----------------------------------------------------
+thola_api_address   | **Required.** Address of the Thola API to connect to
+
+##### thola-ups <a id="plugin-contrib-command-thola-ups"></a>
+
+Checks whether a UPS device has its main voltage applied.
+
+Custom variables passed as [command parameters](03-monitoring-basics.md#command-passing-parameters):
+
+Name                                        | Description
+--------------------------------------------|-----------------------------------------------------------------
+thola_api_address                           | **Required.** Address of the Thola API to connect to
+thola_device_address                        | **Required.** The host's address. Defaults to "$address$" if the host's address attribute is set, “$address6$” otherwise
+thola_device_snmp_community                 | **Optional.** SNMP community of the device
+thola_ups_batt_current_critical_max         | **Optional.** High critical threshold for the battery current in Volt
+thola_ups_batt_current_critical_min         | **Optional.** Low critical threshold for the battery current in Volt
+thola_ups_batt_current_warning_max          | **Optional.** High warning threshold for the battery current in Volt
+thola_ups_batt_current_warning_min          | **Optional.** Low warning threshold for the battery current in Volt
+thola_ups_batt_temperature_critical_max     | **Optional.** High critical threshold for the battery temperature in degree celsius
+thola_ups_batt_temperature_critical_min     | **Optional.** Low critical threshold for the battery temperature in degree celsius
+thola_ups_batt_temperature_warning_max      | **Optional.** High warning threshold for the battery temperature in degree celsius
+thola_ups_batt_temperature_warning_min      | **Optional.** Low warning threshold for the battery temperature in degree celsius
+thola_ups_current_load_critical_max         | **Optional.** High critical threshold for the current load in percent
+thola_ups_current_load_critical_min         | **Optional.** Low critical threshold for the current load in percent
+thola_ups_current_load_warning_max          | **Optional.** High warning threshold for the current load in percent
+thola_ups_current_load_warning_min          | **Optional.** Low warning threshold for the current load in percent
+thola_ups_rectifier_current_critical_max    | **Optional.** High critical threshold for the current rectifier in Volt
+thola_ups_rectifier_current_critical_min    | **Optional.** Low critical threshold for the current rectifier in Volt
+thola_ups_rectifier_current_warning_max     | **Optional.** High warning threshold for the current rectifier in Volt
+thola_ups_rectifier_current_warning_min     | **Optional.** Low warning threshold for the current rectifier in Volt
+thola_ups_system_voltage_critical_max       | **Optional.** High critical threshold for the system voltage in Volt
+thola_ups_system_voltage_critical_min       | **Optional.** Low critical threshold for the system voltage in Volt
+thola_ups_system_voltage_warning_max        | **Optional.** High warning threshold for the system voltage in Volt
+thola_ups_system_voltage_warning_min        | **Optional.** Low warning threshold for the system voltage in Volt
 
 ### Network Services <a id="plugin-contrib-network-services"></a>
 
@@ -3281,7 +3488,7 @@ lsyncd_critical         | **Optional.** Critical if more then N delays (default:
 #### fail2ban <a id="plugin-contrib-command-fail2ban"></a>
 
 The [check_fail2ban](https://github.com/fail2ban/fail2ban/tree/master/files/nagios) plugin
-uses the `fail2ban-client` binary to monitor [fail2ban](http://www.fail2ban.org) jails.
+uses the `fail2ban-client` binary to monitor [fail2ban](https://www.fail2ban.org) jails.
 
 The plugin requires `sudo` permissions.
 You can add a sudoers file to allow your monitoring user to use the plugin, i.e. edit /etc/sudoers.d/icinga and add:
@@ -3304,7 +3511,8 @@ fail2ban_path           | **Optional.** Specify the path to the tw_cli binary, d
 fail2ban_warning        | **Optional.** Specify a warning threshold, default is 1
 fail2ban_critical       | **Optional.** Specify a critical threshold, default is 2
 fail2ban_socket         | **Optional.** Specify a socket path, default is unset
-fail2ban_perfdata       | **Optional.** If set to true, activate the perfdata output, default value for the plugin is set to true.
+fail2ban_perfdata       | **Optional.** If set to true, activate the perfdata output, default value for the plugin is set to true
+fail2ban_jail           | **Optional.** Specify the name of the specific jail to monitor; omitted by default, i.e. all jails are being monitored.
 
 ### Operating System <a id="plugin-contrib-operating-system"></a>
 
@@ -3319,17 +3527,18 @@ compared to thresholds. More details can be found on [this blog entry](http://sy
 
 Custom variables passed as [command parameters](03-monitoring-basics.md#command-passing-parameters):
 
-Name         | Description
--------------|-----------------------------------------------------------------------------------------------------------------------
-mem_used     | **Optional.** Tell the plugin to check for used memory in opposite of **mem_free**. Must specify one of these as true.
-mem_free     | **Optional.** Tell the plugin to check for free memory in opposite of **mem_used**. Must specify one of these as true.
-mem_cache    | **Optional.** If set to true, plugin will count cache as free memory. Defaults to false.
-mem_warning  | **Required.** Specify the warning threshold as number interpreted as percent.
-mem_critical | **Required.** Specify the critical threshold as number interpreted as percent.
+Name          | Description
+--------------|-----------------------------------------------------------------------------------------------------------------------
+mem_used      | **Optional.** Tell the plugin to check for used memory to the exclusion of **mem_free** and **mem_available**. Must specify one of these as true.
+mem_free      | **Optional.** Tell the plugin to check for free memory to the exclusion of **mem_used** and **mem_available**. Must specify one of these as true.
+mem_available | **Optional.** Tell the plugin to check available memory to the exclusion of **mem_free** and **mem_used**. Must specify one of these as true.
+mem_cache     | **Optional.** If set to true, plugin will count cache as free memory. Defaults to false.
+mem_warning   | **Required.** Specify the warning threshold as number interpreted as percent.
+mem_critical  | **Required.** Specify the critical threshold as number interpreted as percent.
 
 #### sar-perf <a id="plugin-contrib-command-sar-perf"></a>
 
-The [check_sar_perf.py](https://github.com/dnsmichi/check-sar-perf)
+The [check_sar_perf.py](https://github.com/NETWAYS/check-sar-perf)
 plugin collects performance metrics from Linux hosts using the `sar` binary available in the `sysstat` package.
 
 Custom variables passed as [command parameters](03-monitoring-basics.md#command-passing-parameters):
@@ -3388,6 +3597,25 @@ iostat\_wwrite | **Required.** Warning threshold for KB/s writes (default: 100).
 iostat\_ctps   | **Required.** Critical threshold for tps (default: 200).
 iostat\_cread  | **Required.** Critical threshold for KB/s reads (default: 200).
 iostat\_cwrite | **Required.** Critical threshold for KB/s writes (default: 200).
+
+#### systemd <a id="plugin-contrib-command-systemd"></a>
+
+The [check_systemd.py](https://github.com/Josef-Friedrich/check_systemd) plugin
+will report a degraded system to your monitoring solution. It requires only the [nagiosplugin](https://nagiosplugin.readthedocs.io/en/stable) library.
+
+Custom variables passed as [command parameters](03-monitoring-basics.md#command-passing-parameters):
+
+Name                            | Description
+--------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------
+systemd\_unit                   | **Optional.** Name of the systemd unit that is being tested.
+systemd\_exclude\_unit          | **Optional.** Exclude a systemd unit from the checks. This option can be applied multiple times. Also supports regular expressions.
+systemd\_no\_startup\_time      | **Optional.** Don’t check the startup time. Using this option the options `systemd_warning` and `systemd_critical` have no effect. (Default: `false`)
+systemd\_warning                | **Optional.** Startup time in seconds to result in a warning status. (Default: `60s`)
+systemd\_critical               | **Optional.** Startup time in seconds to result in a critical status. (Default: `120s`)
+systemd\_dead\_timers           | **Optional.** Detect dead / inactive timers. (Default: `false`)
+systemd\_dead\_timers\_warning  | **Optional.** Time ago in seconds for dead / inactive timers to trigger a warning state (by default 6 days).
+systemd\_dead\_timers\_critical | **Optional.** Time ago in seconds for dead / inactive timers to trigger a critical state (by default 7 days).
+systemd\_verbose\_level         | **Optional.** Increase verbosity level (Accepted values: `1`, `2` or `3`). (Defaults to none)
 
 #### yum <a id="plugin-contrib-command-yum"></a>
 
@@ -3486,7 +3714,7 @@ This category includes all plugins for various virtualization technologies.
 
 The [check_esxi_hardware.py](https://www.claudiokuenzler.com/monitoring-plugins/check_esxi_hardware.php) plugin
 uses the [pywbem](https://pywbem.github.io/pywbem/) Python library to monitor the hardware of ESXi servers
-through the [VMWare API](https://www.vmware.com/support/pubs/sdk_pubs.html) and CIM service.
+through the [VMWare CIM API](https://developer.vmware.com/apis/207/cim).
 
 Custom variables passed as [command parameters](03-monitoring-basics.md#command-passing-parameters):
 
@@ -3496,11 +3724,14 @@ esxi_hardware_host      | **Required.** Specifies the host to monitor. Defaults 
 esxi_hardware_user      | **Required.** Specifies the user for polling. Must be a local user of the root group on the system. Can also be provided as a file path file:/path/to/.passwdfile, then first string of file is used.
 esxi_hardware_pass      | **Required.** Password of the user. Can also be provided as a file path file:/path/to/.passwdfile, then second string of file is used.
 esxi_hardware_port      | **Optional.** Specifies the CIM port to connect to. Defaults to 5989.
+esxi_hardware_sslproto  | **Optional.** Specifies the SSL/TLS protocol to use. Defaults to local openssl config.
 esxi_hardware_vendor    | **Optional.** Defines the vendor of the server: "auto", "dell", "hp", "ibm", "intel", "unknown" (default).
 esxi_hardware_html      | **Optional.** Add web-links to hardware manuals for Dell servers (use your country extension). Only useful with **esxi_hardware_vendor** = dell.
 esxi_hardware_ignore    | **Optional.** Comma separated list of CIM elements to ignore.
 esxi_hardware_regex     | **Optional.** Allow regular expression lookups of elements in ignore list. Defaults to false.
 esxi_hardware_perfdata  | **Optional.** Add performcedata for graphers like PNP4Nagios to the output. Defaults to false.
+esxi_hardware_format    | **Optional.** Set output format to string or json. Defaults to string.
+esxi_hardware_pretty    | **Optional.** Show plugin output in a human readable format. Only useful with **esxi_hardware_format** = json.
 esxi_hardware_nopower   | **Optional.** Do not collect power performance data, when **esxi_hardware_perfdata** is set to true. Defaults to false.
 esxi_hardware_novolts   | **Optional.** Do not collect voltage performance data, when **esxi_hardware_perfdata** is set to true. Defaults to false.
 esxi_hardware_nocurrent | **Optional.** Do not collect current performance data, when **esxi_hardware_perfdata** is set to true. Defaults to false.
@@ -3730,6 +3961,7 @@ vmware_include          | **Optional.** Whitelist VMs. No value defined as defau
 vmware_isregexp         | **Optional.** Treat blacklist and whitelist expressions as regexp.
 vmware_multiline        | **Optional.** Multiline output in overview. This mean technically that a multiline output uses a HTML **\<br\>** for the GUI. No value defined as default.
 vmware_openvmtools	| **Optional** Prevent CRITICAL state for installed and running Open VM Tools.
+vmware_novmtools	| **Optional** Prevent CRITICAL state for missing VMware tools.
 
 
 **vmware-esx-soap-host-check**
@@ -5480,6 +5712,7 @@ vmware_username         | **Optional.** The username to connect to Host or vCent
 vmware_password         | **Optional.** The username's password. No value defined as default.
 vmware_authfile         | **Optional.** Use auth file instead username/password to session connect. No effect if **vmware_username** and **vmware_password** are defined <br> **Authentication file content:** <br>  username=vmuser <br> password=p@ssw0rd
 vmware_openvmtools	| **Optional** Prevent CRITICAL state for installed and running Open VM Tools.
+vmware_novmtools	| **Optional** Prevent CRITICAL state for missing VMware tools.
 
 
 **vmware-esx-soap-vm-runtime-issues**
@@ -5545,6 +5778,7 @@ Name                      | Description
 --------------------------|--------------
 ssl_cert_address              | **Optional.** The host's address. Defaults to "$address$" if the host's `address` attribute is set, "$address6$" otherwise.
 ssl_cert_port                 | **Optional.** TCP port number (default: 443).
+ssl_cert_proxy                | **Optional.** Proxy server to use for connecting to the host. Sets http_proxy and the s_client -proxy option.
 ssl_cert_file                 | **Optional.** Local file path. Works only if `ssl_cert_address` is set to "localhost".
 ssl_cert_warn                 | **Optional.** Minimum number of days a certificate has to be valid.
 ssl_cert_critical             | **Optional.** Minimum number of days a certificate has to be valid to issue a critical status.
@@ -5570,16 +5804,21 @@ ssl_cert_ssl_version          | **Optional.** Force specific SSL version out of 
 ssl_cert_disable_ssl_versions | **Optional.** Disable specific SSL versions out of {ssl2,ssl3,tls1,tls1_1,tls1_2}. Multiple versions can be given as array.
 ssl_cert_cipher               | **Optional.** Cipher selection: force {ecdsa,rsa} authentication.
 ssl_cert_ignore_expiration    | **Optional.** Ignore expiration date.
+ssl_cert_ignore_host_cn       | **Optional.** Do not complain if the CN does not match.
 ssl_cert_ignore_ocsp          | **Optional.** Do not check revocation with OCSP.
+ssl_cert_ignore_ocsp_errors   | **Optional.** Continue if the OCSP status cannot be checked.
+ssl_cert_ignore_ocsp_timeout  | **Optional.** Ignore OCSP result when timeout occurs while checking.
+ssl_cert_ignore_sct           | **Optional.** Do not check for signed certificate timestamps.
+ssl_cert_ignore_tls_renegotiation  | **Optional.** Do not check for renegotiation.
 
 
 #### jmx4perl <a id="plugin-contrib-command-jmx4perl"></a>
 
-The [check_jmx4perl](http://search.cpan.org/~roland/jmx4perl/scripts/check_jmx4perl) plugin
+The [check_jmx4perl](https://metacpan.org/pod/distribution/jmx4perl/scripts/check_jmx4perl) plugin
 uses the HTTP API exposed by the [Jolokia](https://jolokia.org)
 web application and queries Java message beans on an application server. It is
 part of the `JMX::Jmx4Perl` Perl module which includes detailed
-[documentation](http://search.cpan.org/~roland/jmx4perl/scripts/check_jmx4perl).
+[documentation](https://metacpan.org/pod/distribution/jmx4perl/scripts/check_jmx4perl).
 
 Custom variables passed as [command parameters](03-monitoring-basics.md#command-passing-parameters):
 
@@ -5750,7 +5989,7 @@ usage                   | Cache file usage as a percentage of the total cache sp
 
 The [check_haproxy](https://salsa.debian.org/nagios-team/pkg-nagios-plugins-contrib/blob/master/check_haproxy/check_haproxy) plugin,
 also available in the [monitoring-plugins-contrib](https://packages.debian.org/nagios-plugins-contrib) on debian,
-uses the `haproxy` csv statistics page to monitor [haproxy](http://www.haproxy.org/) response time. The plugin outputa performance data for backends sessions and statistics response time.
+uses the `haproxy` csv statistics page to monitor [haproxy](https://www.haproxy.org/) response time. The plugin output performance data for backends sessions and statistics response time.
 
 This plugin need to access the csv statistics page. You can configure it in haproxy by adding a new frontend:
 ```
@@ -5776,7 +6015,7 @@ haproxy_critical        | **Optional.** Critical request time threshold (in seco
 #### haproxy_status <a id="plugin-contrib-command-haproxy_status"></a>
 
 The [check_haproxy_status](https://github.com/jonathanio/monitoring-nagios-haproxy) plugin,
-uses the `haproxy` statistics socket to monitor [haproxy](http://www.haproxy.org/) frontends/backends.
+uses the `haproxy` statistics socket to monitor [haproxy](https://www.haproxy.org/) frontends/backends.
 
 This plugin need read/write access to the statistics socket with an operator level. You can configure it in the global section of haproxy to allow icinga user to use it:
 ```
@@ -5799,7 +6038,7 @@ haproxy\_status\_socket     | **Required.** Path to the socket check_haproxy sho
 
 #### phpfpm_status <a id="plugin-contrib-command-phpfpm_status"></a>
 
-The [check_phpfpm_status](http://github.com/regilero/check_phpfpm_status) plugin,
+The [check_phpfpm_status](https://github.com/regilero/check_phpfpm_status) plugin,
 uses the `php-fpm` status page to monitor php-fpm.
 
 Custom variables passed as [command parameters](03-monitoring-basics.md#command-passing-parameters):

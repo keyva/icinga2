@@ -22,7 +22,7 @@ bool ServiceGroup::EvaluateObjectRule(const Service::Ptr& service, const ConfigI
 {
 	String groupName = group->GetName();
 
-	CONTEXT("Evaluating rule for group '" + groupName + "'");
+	CONTEXT("Evaluating rule for group '" << groupName << "'");
 
 	Host::Ptr host = service->GetHost();
 
@@ -48,7 +48,7 @@ bool ServiceGroup::EvaluateObjectRule(const Service::Ptr& service, const ConfigI
 
 void ServiceGroup::EvaluateObjectRules(const Service::Ptr& service)
 {
-	CONTEXT("Evaluating group membership for service '" + service->GetName() + "'");
+	CONTEXT("Evaluating group membership for service '" << service->GetName() << "'");
 
 	for (const ConfigItem::Ptr& group : ConfigItem::GetItems(ServiceGroup::TypeInstance))
 	{
@@ -61,7 +61,7 @@ void ServiceGroup::EvaluateObjectRules(const Service::Ptr& service)
 
 std::set<Service::Ptr> ServiceGroup::GetMembers() const
 {
-	boost::mutex::scoped_lock lock(m_ServiceGroupMutex);
+	std::unique_lock<std::mutex> lock(m_ServiceGroupMutex);
 	return m_Members;
 }
 
@@ -69,13 +69,13 @@ void ServiceGroup::AddMember(const Service::Ptr& service)
 {
 	service->AddGroup(GetName());
 
-	boost::mutex::scoped_lock lock(m_ServiceGroupMutex);
+	std::unique_lock<std::mutex> lock(m_ServiceGroupMutex);
 	m_Members.insert(service);
 }
 
 void ServiceGroup::RemoveMember(const Service::Ptr& service)
 {
-	boost::mutex::scoped_lock lock(m_ServiceGroupMutex);
+	std::unique_lock<std::mutex> lock(m_ServiceGroupMutex);
 	m_Members.erase(service);
 }
 

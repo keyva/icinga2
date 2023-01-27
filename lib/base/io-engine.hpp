@@ -3,11 +3,15 @@
 #ifndef IO_ENGINE_H
 #define IO_ENGINE_H
 
+#include "base/exception.hpp"
 #include "base/lazy-init.hpp"
+#include "base/logger.hpp"
+#include "base/shared-object.hpp"
 #include <atomic>
 #include <exception>
 #include <memory>
 #include <thread>
+#include <utility>
 #include <vector>
 #include <stdexcept>
 #include <boost/exception/all.hpp>
@@ -79,28 +83,6 @@ public:
 
 	boost::asio::io_context& GetIoContext();
 
-	/*
-	 * Custom exceptions thrown in a Boost.Coroutine may cause stack corruption.
-	 * Ensure that these are wrapped correctly.
-	 *
-	 * Inspired by https://github.com/niekbouman/commelec-api/blob/master/commelec-api/coroutine-exception.hpp
-	 * Source: http://boost.2283326.n4.nabble.com/coroutine-only-std-exceptions-are-caught-from-coroutines-td4683671.html
-	 */
-	static inline boost::exception_ptr convertExceptionPtr(std::exception_ptr ex) {
-		try {
-			throw boost::enable_current_exception(ex);
-		} catch (...) {
-			return boost::current_exception();
-		}
-	}
-
-	static inline void rethrowBoostExceptionPointer() {
-		std::exception_ptr sep;
-		sep = std::current_exception();
-		boost::exception_ptr bep = convertExceptionPtr(sep);
-		boost::rethrow_exception(bep);
-	}
-
 	static inline size_t GetCoroutineStackSize() {
 #ifdef _WIN32
 		// Increase the stack size for Windows coroutines to prevent exception corruption.
@@ -126,13 +108,21 @@ public:
 					// Required for proper stack unwinding when coroutines are destroyed.
 					// https://github.com/boostorg/coroutine/issues/39
 					throw;
+				} catch (const std::exception& ex) {
+					Log(LogCritical, "IoEngine", "Exception in coroutine!");
+					Log(LogDebug, "IoEngine") << "Exception in coroutine: " << DiagnosticInformation(ex);
 				} catch (...) {
-					// Handle uncaught exceptions outside of the coroutine.
-					rethrowBoostExceptionPointer();
+					Log(LogCritical, "IoEngine", "Exception in coroutine!");
 				}
 			},
 			boost::coroutines::attributes(GetCoroutineStackSize()) // Set a pre-defined stack size.
 		);
+	}
+
+	static inline
+	void YieldCurrentCoroutine(boost::asio::yield_context yc)
+	{
+		Get().m_AlreadyExpiredTimer.async_wait(yc);
 	}
 
 private:
@@ -169,6 +159,56 @@ public:
 
 private:
 	boost::asio::deadline_timer m_Timer;
+};
+
+/**
+ * I/O timeout emulator
+ *
+ * @ingroup base
+ */
+class Timeout : public SharedObject
+{
+public:
+	DECLARE_PTR_TYPEDEFS(Timeout);
+
+	template<class Executor, class TimeoutFromNow, class OnTimeout>
+	Timeout(boost::asio::io_context& io, Executor& executor, TimeoutFromNow timeoutFromNow, OnTimeout onTimeout)
+		: m_Timer(io)
+	{
+		Ptr keepAlive (this);
+
+		m_Cancelled.store(false);
+		m_Timer.expires_from_now(std::move(timeoutFromNow));
+
+		IoEngine::SpawnCoroutine(executor, [this, keepAlive, onTimeout](boost::asio::yield_context yc) {
+			if (m_Cancelled.load()) {
+				return;
+			}
+
+			{
+				boost::system::error_code ec;
+
+				m_Timer.async_wait(yc[ec]);
+
+				if (ec) {
+					return;
+				}
+			}
+
+			if (m_Cancelled.load()) {
+				return;
+			}
+
+			auto f (onTimeout);
+			f(std::move(yc));
+		});
+	}
+
+	void Cancel();
+
+private:
+	boost::asio::deadline_timer m_Timer;
+	std::atomic<bool> m_Cancelled;
 };
 
 }

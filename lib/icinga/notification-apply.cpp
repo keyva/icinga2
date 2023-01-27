@@ -17,12 +17,12 @@ INITIALIZE_ONCE([]() {
 	ApplyRule::RegisterType("Notification", { "Host", "Service" });
 });
 
-bool Notification::EvaluateApplyRuleInstance(const Checkable::Ptr& checkable, const String& name, ScriptFrame& frame, const ApplyRule& rule)
+bool Notification::EvaluateApplyRuleInstance(const Checkable::Ptr& checkable, const String& name, ScriptFrame& frame, const ApplyRule& rule, bool skipFilter)
 {
-	if (!rule.EvaluateFilter(frame))
+	if (!skipFilter && !rule.EvaluateFilter(frame))
 		return false;
 
-	DebugInfo di = rule.GetDebugInfo();
+	auto& di (rule.GetDebugInfo());
 
 #ifdef _DEBUG
 	Log(LogDebug, "Notification")
@@ -34,6 +34,8 @@ bool Notification::EvaluateApplyRuleInstance(const Checkable::Ptr& checkable, co
 	builder.SetName(name);
 	builder.SetScope(frame.Locals->ShallowClone());
 	builder.SetIgnoreOnError(rule.GetIgnoreOnError());
+
+	builder.AddExpression(new ImportDefaultTemplatesExpression());
 
 	Host::Ptr host;
 	Service::Ptr service;
@@ -53,21 +55,17 @@ bool Notification::EvaluateApplyRuleInstance(const Checkable::Ptr& checkable, co
 
 	builder.AddExpression(new OwnedExpression(rule.GetExpression()));
 
-	builder.AddExpression(new ImportDefaultTemplatesExpression());
-
 	ConfigItem::Ptr notificationItem = builder.Compile();
 	notificationItem->Register();
 
 	return true;
 }
 
-bool Notification::EvaluateApplyRule(const Checkable::Ptr& checkable, const ApplyRule& rule)
+bool Notification::EvaluateApplyRule(const Checkable::Ptr& checkable, const ApplyRule& rule, bool skipFilter)
 {
-	DebugInfo di = rule.GetDebugInfo();
+	auto& di (rule.GetDebugInfo());
 
-	std::ostringstream msgbuf;
-	msgbuf << "Evaluating 'apply' rule (" << di << ")";
-	CONTEXT(msgbuf.str());
+	CONTEXT("Evaluating 'apply' rule (" << di << ")");
 
 	Host::Ptr host;
 	Service::Ptr service;
@@ -110,7 +108,7 @@ bool Notification::EvaluateApplyRule(const Checkable::Ptr& checkable, const Appl
 				name += instance;
 			}
 
-			if (EvaluateApplyRuleInstance(checkable, name, frame, rule))
+			if (EvaluateApplyRuleInstance(checkable, name, frame, rule, skipFilter))
 				match = true;
 		}
 	} else if (vinstances.IsObjectType<Dictionary>()) {
@@ -123,7 +121,7 @@ bool Notification::EvaluateApplyRule(const Checkable::Ptr& checkable, const Appl
 			frame.Locals->Set(rule.GetFKVar(), key);
 			frame.Locals->Set(rule.GetFVVar(), dict->Get(key));
 
-			if (EvaluateApplyRuleInstance(checkable, rule.GetName() + key, frame, rule))
+			if (EvaluateApplyRuleInstance(checkable, rule.GetName() + key, frame, rule, skipFilter))
 				match = true;
 		}
 	}
@@ -133,27 +131,31 @@ bool Notification::EvaluateApplyRule(const Checkable::Ptr& checkable, const Appl
 
 void Notification::EvaluateApplyRules(const Host::Ptr& host)
 {
-	CONTEXT("Evaluating 'apply' rules for host '" + host->GetName() + "'");
+	CONTEXT("Evaluating 'apply' rules for host '" << host->GetName() << "'");
 
-	for (ApplyRule& rule : ApplyRule::GetRules("Notification"))
+	for (auto& rule : ApplyRule::GetRules(Notification::TypeInstance, Host::TypeInstance))
 	{
-		if (rule.GetTargetType() != "Host")
-			continue;
+		if (EvaluateApplyRule(host, *rule))
+			rule->AddMatch();
+	}
 
-		if (EvaluateApplyRule(host, rule))
-			rule.AddMatch();
+	for (auto& rule : ApplyRule::GetTargetedHostRules(Notification::TypeInstance, host->GetName())) {
+		if (EvaluateApplyRule(host, *rule, true))
+			rule->AddMatch();
 	}
 }
 
 void Notification::EvaluateApplyRules(const Service::Ptr& service)
 {
-	CONTEXT("Evaluating 'apply' rules for service '" + service->GetName() + "'");
+	CONTEXT("Evaluating 'apply' rules for service '" << service->GetName() << "'");
 
-	for (ApplyRule& rule : ApplyRule::GetRules("Notification")) {
-		if (rule.GetTargetType() != "Service")
-			continue;
+	for (auto& rule : ApplyRule::GetRules(Notification::TypeInstance, Service::TypeInstance)) {
+		if (EvaluateApplyRule(service, *rule))
+			rule->AddMatch();
+	}
 
-		if (EvaluateApplyRule(service, rule))
-			rule.AddMatch();
+	for (auto& rule : ApplyRule::GetTargetedServiceRules(Notification::TypeInstance, service->GetHost()->GetName(), service->GetShortName())) {
+		if (EvaluateApplyRule(service, *rule, true))
+			rule->AddMatch();
 	}
 }

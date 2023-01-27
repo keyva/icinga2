@@ -151,9 +151,6 @@ static std::string FieldTypeToIcingaName(const Field& field, bool inner)
 	if (field.Attributes & FAEnum)
 		return "Number";
 
-	if (ftype == "bool" || ftype == "int" || ftype == "double")
-		return "Number";
-
 	if (ftype == "int" || ftype == "double")
 		return "Number";
 	else if (ftype == "bool")
@@ -379,14 +376,16 @@ void ClassCompiler::HandleClass(const Klass& klass, const ClassDebugInfo&)
 		<< "}" << std::endl << std::endl;
 
 	/* GetLoadDependencies */
-	m_Header << "\t" << "std::vector<String> GetLoadDependencies() const override;" << std::endl;
+	m_Header << "\t" << "const std::unordered_set<Type*>& GetLoadDependencies() const override;" << std::endl;
 
-	m_Impl << "std::vector<String> TypeImpl<" << klass.Name << ">::GetLoadDependencies() const" << std::endl
+	m_Impl << "const std::unordered_set<Type*>& TypeImpl<" << klass.Name << ">::GetLoadDependencies() const" << std::endl
 		<< "{" << std::endl
-		<< "\t" << "std::vector<String> deps;" << std::endl;
+		<< "\t" << "static const std::unordered_set<Type*> deps ({" << std::endl;
 
 	for (const std::string& dep : klass.LoadDependencies)
-		m_Impl << "\t" << "deps.emplace_back(\"" << dep << "\");" << std::endl;
+		m_Impl << "\t\t" << "GetByName(\"" << dep << "\").get()," << std::endl;
+
+	m_Impl << "\t" << "});" << std::endl;
 
 	m_Impl << "\t" << "return deps;" << std::endl
 		<< "}" << std::endl << std::endl;
@@ -517,7 +516,17 @@ void ClassCompiler::HandleClass(const Klass& klass, const ClassDebugInfo&)
 		}
 
 		if (field.Type.IsName) {
-			m_Impl << "\t" << "if (";
+			if (field.Type.ArrayRank > 0) {
+				m_Impl << "\t\t\t" << "if (!" << valName << ".IsEmpty() && ";
+
+				m_Impl << "!" << valName << ".IsString())" << std::endl
+					<< "\t\t\t\t" << "BOOST_THROW_EXCEPTION(ValidationError(dynamic_cast<ConfigObject *>(this), { \""
+					<< field.Name << R"(" }, "It is not allowed to specify '" + )" << valName << R"( + "' of type '" + )"
+					<< valName << ".GetTypeName()" << R"( + "' as ')" << field.Type.TypeName
+				    << "' name. Expected type of '" << field.Type.TypeName << "' name: 'String'.\"));" << std::endl;
+			}
+
+			m_Impl << "\t\t\t" << "if (";
 
 			if (field.Type.ArrayRank > 0)
 				m_Impl << valName << ".IsEmpty() || ";
@@ -525,7 +534,7 @@ void ClassCompiler::HandleClass(const Klass& klass, const ClassDebugInfo&)
 				m_Impl << "!" << valName << ".IsEmpty() && ";
 
 			m_Impl << "!utils.ValidateName(\"" << field.Type.TypeName << "\", " << valName << "))" << std::endl
-				<< "\t\t" << "BOOST_THROW_EXCEPTION(ValidationError(dynamic_cast<ConfigObject *>(this), { \"" << field.Name << R"(" }, "Object '" + )" << valName << R"( + "' of type ')" << field.Type.TypeName
+				<< "\t\t\t\t" << "BOOST_THROW_EXCEPTION(ValidationError(dynamic_cast<ConfigObject *>(this), { \"" << field.Name << R"(" }, "Object '" + )" << valName << R"( + "' of type ')" << field.Type.TypeName
 				<< "' does not exist.\"));" << std::endl;
 		} else if (field.Type.ArrayRank > 0 && (ftype == "Number" || ftype == "Boolean")) {
 			m_Impl << "\t" << "try {" << std::endl
@@ -797,7 +806,7 @@ void ClassCompiler::HandleClass(const Klass& klass, const ClassDebugInfo&)
 					<< "{" << std::endl;
 
 				if (field.GetAccessor.empty() && !(field.Attributes & FANoStorage))
-					m_Impl << "\t" << "return m_" << field.GetFriendlyName() << ";" << std::endl;
+					m_Impl << "\t" << "return m_" << field.GetFriendlyName() << ".load();" << std::endl;
 				else
 					m_Impl << field.GetAccessor << std::endl;
 
@@ -830,27 +839,33 @@ void ClassCompiler::HandleClass(const Klass& klass, const ClassDebugInfo&)
 				m_Impl << "void ObjectImpl<" << klass.Name << ">::Set" << field.GetFriendlyName() << "(" << field.Type.GetArgumentType() << " value, bool suppress_events, const Value& cookie)" << std::endl
 					<< "{" << std::endl;
 
-				if (field.Type.IsName || !field.TrackAccessor.empty())
-					m_Impl << "\t" << "Value oldValue = Get" << field.GetFriendlyName() << "();" << std::endl;
+				if (field.Type.IsName || !field.TrackAccessor.empty() || field.Attributes & FASignalWithOldValue)
+					m_Impl << "\t" << "Value oldValue = Get" << field.GetFriendlyName() << "();" << std::endl
+						<< "\t" << "auto *dobj = dynamic_cast<ConfigObject *>(this);" << std::endl;
 
-					
 				if (field.SetAccessor.empty() && !(field.Attributes & FANoStorage))
-					m_Impl << "\t" << "m_" << field.GetFriendlyName() << " = value;" << std::endl;
+					m_Impl << "\t" << "m_" << field.GetFriendlyName() << ".store(value);" << std::endl;
 				else
 					m_Impl << field.SetAccessor << std::endl << std::endl;
 
 				if (field.Type.IsName || !field.TrackAccessor.empty()) {
 					if (field.Name != "active") {
-						m_Impl << "\t" << "auto *dobj = dynamic_cast<ConfigObject *>(this);" << std::endl
-							<< "\t" << "if (!dobj || dobj->IsActive())" << std::endl
+						m_Impl << "\t" << "if (!dobj || dobj->IsActive())" << std::endl
 							<< "\t";
 					}
 
 					m_Impl << "\t" << "Track" << field.GetFriendlyName() << "(oldValue, value);" << std::endl;
 				}
 
-				m_Impl << "\t" << "if (!suppress_events)" << std::endl
-					<< "\t\t" << "Notify" << field.GetFriendlyName() << "(cookie);" << std::endl
+				m_Impl << "\t" << "if (!suppress_events) {" << std::endl
+					<< "\t\t" << "Notify" << field.GetFriendlyName() << "(cookie);" << std::endl;
+
+				if (field.Attributes & FASignalWithOldValue) {
+					m_Impl << "\t\t" << "if (!dobj || dobj->IsActive())" << std::endl
+						   << "\t\t\t" << "On" << field.GetFriendlyName() << "ChangedWithOldValue(static_cast<" << klass.Name << " *>(this), oldValue, value);" << std::endl;
+				}
+
+				m_Impl << "\t" "}" << std::endl << std::endl
 					<< "}" << std::endl << std::endl;
 			}
 		}
@@ -1044,7 +1059,7 @@ void ClassCompiler::HandleClass(const Klass& klass, const ClassDebugInfo&)
 			if (field.Attributes & FANoStorage)
 				continue;
 
-			m_Header << "\t" << field.Type.GetRealType() << " m_" << field.GetFriendlyName() << ";" << std::endl;
+			m_Header << "\tAtomicOrLocked<" << field.Type.GetRealType() << "> m_" << field.GetFriendlyName() << ";" << std::endl;
 		}
 		
 		/* signal */
@@ -1053,6 +1068,15 @@ void ClassCompiler::HandleClass(const Klass& klass, const ClassDebugInfo&)
 		for (const Field& field : klass.Fields) {
 			m_Header << "\t" << "static boost::signals2::signal<void (const intrusive_ptr<" << klass.Name << ">&, const Value&)> On" << field.GetFriendlyName() << "Changed;" << std::endl;
 			m_Impl << std::endl << "boost::signals2::signal<void (const intrusive_ptr<" << klass.Name << ">&, const Value&)> ObjectImpl<" << klass.Name << ">::On" << field.GetFriendlyName() << "Changed;" << std::endl << std::endl;
+
+			if (field.Attributes & FASignalWithOldValue) {
+				m_Header << "\t" << "static boost::signals2::signal<void (const intrusive_ptr<" << klass.Name
+					<< ">&, const Value&, const Value&)> On" << field.GetFriendlyName() << "ChangedWithOldValue;"
+					<< std::endl;
+				m_Impl << std::endl << "boost::signals2::signal<void (const intrusive_ptr<" << klass.Name
+					<< ">&, const Value&, const Value&)> ObjectImpl<" << klass.Name << ">::On"
+					<< field.GetFriendlyName() << "ChangedWithOldValue;" << std::endl << std::endl;
+			}
 		}
 	}
 
@@ -1431,6 +1455,7 @@ void ClassCompiler::CompileStream(const std::string& path, std::istream& input,
 		<< "#include \"base/type.hpp\"" << std::endl
 		<< "#include \"base/value.hpp\"" << std::endl
 		<< "#include \"base/array.hpp\"" << std::endl
+		<< "#include \"base/atomic.hpp\"" << std::endl
 		<< "#include \"base/dictionary.hpp\"" << std::endl
 		<< "#include <boost/signals2.hpp>" << std::endl << std::endl;
 

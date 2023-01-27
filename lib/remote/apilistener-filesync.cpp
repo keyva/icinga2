@@ -10,15 +10,17 @@
 #include "base/convert.hpp"
 #include "base/application.hpp"
 #include "base/exception.hpp"
+#include "base/shared.hpp"
 #include "base/utility.hpp"
 #include <fstream>
 #include <iomanip>
+#include <thread>
 
 using namespace icinga;
 
 REGISTER_APIFUNCTION(Update, config, &ApiListener::ConfigUpdateHandler);
 
-boost::mutex ApiListener::m_ConfigSyncStageLock;
+std::mutex ApiListener::m_ConfigSyncStageLock;
 
 /**
  * Entrypoint for updating all authoritative configs from /etc/zones.d, packages, etc.
@@ -310,10 +312,25 @@ Value ApiListener::ConfigUpdateHandler(const MessageOrigin::Ptr& origin, const D
 		return Empty;
 	}
 
+	std::thread([origin, params, listener]() {
+		try {
+			listener->HandleConfigUpdate(origin, params);
+		} catch (const std::exception& ex) {
+			auto msg ("Exception during config sync: " + DiagnosticInformation(ex));
+
+			Log(LogCritical, "ApiListener") << msg;
+			listener->UpdateLastFailedZonesStageValidation(msg);
+		}
+	}).detach();
+	return Empty;
+}
+
+void ApiListener::HandleConfigUpdate(const MessageOrigin::Ptr& origin, const Dictionary::Ptr& params)
+{
 	/* Only one transaction is allowed, concurrent message handlers need to wait.
 	 * This affects two parent endpoints sending the config in the same moment.
 	 */
-	boost::mutex::scoped_lock lock(m_ConfigSyncStageLock);
+	std::lock_guard<std::mutex> lock(m_ConfigSyncStageLock);
 
 	String apiZonesStageDir = GetApiZonesStageDir();
 	String fromEndpointName = origin->FromClient->GetEndpoint()->GetName();
@@ -404,6 +421,12 @@ Value ApiListener::ConfigUpdateHandler(const MessageOrigin::Ptr& origin, const D
 		Dictionary::Ptr productionConfig = MergeConfigUpdate(productionConfigInfo);
 		Dictionary::Ptr newConfig = MergeConfigUpdate(newConfigInfo);
 
+		bool timestampChanged = false;
+
+		if (CompareTimestampsConfigChange(productionConfig, newConfig, stageConfigZoneDir)) {
+			timestampChanged = true;
+		}
+
 		/* If we have received 'checksums' via cluster message, go for it.
 		 * Otherwise do the old timestamp dance for versions < 2.11.
 		 */
@@ -412,7 +435,7 @@ Value ApiListener::ConfigUpdateHandler(const MessageOrigin::Ptr& origin, const D
 				<< "Received configuration for zone '" << zoneName << "' from endpoint '"
 				<< fromEndpointName << "'. Comparing the timestamp and checksums.";
 
-			if (CompareTimestampsConfigChange(productionConfig, newConfig, stageConfigZoneDir)) {
+			if (timestampChanged) {
 
 				if (CheckConfigChange(productionConfigInfo, newConfigInfo))
 					configChange = true;
@@ -429,7 +452,7 @@ Value ApiListener::ConfigUpdateHandler(const MessageOrigin::Ptr& origin, const D
 				<< "Received configuration update without checksums from parent endpoint "
 				<< fromEndpointName << ". This behaviour is deprecated. Please upgrade the parent endpoint to 2.11+";
 
-			if (CompareTimestampsConfigChange(productionConfig, newConfig, stageConfigZoneDir)) {
+			if (timestampChanged) {
 				configChange = true;
 			}
 
@@ -491,8 +514,8 @@ Value ApiListener::ConfigUpdateHandler(const MessageOrigin::Ptr& origin, const D
 			<< "Applying configuration file update for path '" << stageConfigZoneDir << "' ("
 			<< numBytes << " Bytes).";
 
-		// If the update removes a path, delete it on disk and signal a config change.
-		{
+		if (timestampChanged) {
+			// If the update removes a path, delete it on disk and signal a config change.
 			ObjectLock xlock(productionConfig);
 
 			for (const Dictionary::Pair& kv : productionConfig) {
@@ -521,37 +544,64 @@ Value ApiListener::ConfigUpdateHandler(const MessageOrigin::Ptr& origin, const D
 		Log(LogInformation, "ApiListener")
 			<< "Received configuration updates (" << count << ") from endpoint '" << fromEndpointName
 			<< "' are different to production, triggering validation and reload.";
-		AsyncTryActivateZonesStage(relativePaths);
+		TryActivateZonesStage(relativePaths);
 	} else {
 		Log(LogInformation, "ApiListener")
 			<< "Received configuration updates (" << count << ") from endpoint '" << fromEndpointName
 			<< "' are equal to production, skipping validation and reload.";
+		ClearLastFailedZonesStageValidation();
 	}
-
-	return Empty;
 }
 
 /**
- * Callback for stage config validation.
- * When validation was successful, the configuration is copied from
- * stage to production and a restart is triggered.
- * On failure, there's no restart and this is logged.
+ * Spawns a new validation process with 'System.ZonesStageVarDir' set to override the config validation zone dirs with
+ * our current stage. Then waits for the validation result and if it was successful, the configuration is copied from
+ * stage to production and a restart is triggered. On validation failure, there is no restart and this is logged.
  *
- * @param pr Result of the validation process.
+ * The caller of this function must hold m_ConfigSyncStageLock.
+ *
  * @param relativePaths Collected paths including the zone name, which are copied from stage to current directories.
  */
-void ApiListener::TryActivateZonesStageCallback(const ProcessResult& pr,
-	const std::vector<String>& relativePaths)
+void ApiListener::TryActivateZonesStage(const std::vector<String>& relativePaths)
 {
+	VERIFY(Application::GetArgC() >= 1);
+
+	/* Inherit parent process args. */
+	Array::Ptr args = new Array({
+		Application::GetExePath(Application::GetArgV()[0]),
+	});
+
+	for (int i = 1; i < Application::GetArgC(); i++) {
+		String argV = Application::GetArgV()[i];
+
+		if (argV == "-d" || argV == "--daemonize")
+			continue;
+
+		args->Add(argV);
+	}
+
+	args->Add("--validate");
+
+	// Set the ZonesStageDir. This creates our own local chroot without any additional automated zone includes.
+	args->Add("--define");
+	args->Add("System.ZonesStageVarDir=" + GetApiZonesStageDir());
+
+	Process::Ptr process = new Process(Process::PrepareCommand(args));
+	process->SetTimeout(Application::GetReloadTimeout());
+
+	process->Run();
+	const ProcessResult& pr = process->WaitForResult();
+
+	String apiDir = GetApiDir();
 	String apiZonesDir = GetApiZonesDir();
 	String apiZonesStageDir = GetApiZonesStageDir();
 
-	String logFile = apiZonesStageDir + "/startup.log";
+	String logFile = apiDir + "/zones-stage-startup.log";
 	std::ofstream fpLog(logFile.CStr(), std::ofstream::out | std::ostream::binary | std::ostream::trunc);
 	fpLog << pr.Output;
 	fpLog.close();
 
-	String statusFile = apiZonesStageDir + "/status";
+	String statusFile = apiDir + "/zones-stage-status";
 	std::ofstream fpStatus(statusFile.CStr(), std::ofstream::out | std::ostream::binary | std::ostream::trunc);
 	fpStatus << pr.ExitStatus;
 	fpStatus.close();
@@ -595,50 +645,20 @@ void ApiListener::TryActivateZonesStageCallback(const ProcessResult& pr,
 		return;
 	}
 
+	String failedLogFile = apiDir + "/zones-stage-startup-last-failed.log";
+	std::ofstream fpFailedLog(failedLogFile.CStr(), std::ofstream::out | std::ostream::binary | std::ostream::trunc);
+	fpFailedLog << pr.Output;
+	fpFailedLog.close();
+
 	// Error case.
 	Log(LogCritical, "ApiListener")
 		<< "Config validation failed for staged cluster config sync in '" << apiZonesStageDir
-		<< "'. Aborting. Logs: '" << logFile << "'";
+		<< "'. Aborting. Logs: '" << failedLogFile << "'";
 
 	ApiListener::Ptr listener = ApiListener::GetInstance();
 
 	if (listener)
 		listener->UpdateLastFailedZonesStageValidation(pr.Output);
-}
-
-/**
- * Spawns a new validation process and waits for its output.
- * Sets 'System.ZonesStageVarDir' to override the config validation zone dirs with our current stage.
- *
- * @param relativePaths Required for later file operations in the callback. Provides the zone name plus path in a list.
- */
-void ApiListener::AsyncTryActivateZonesStage(const std::vector<String>& relativePaths)
-{
-	VERIFY(Application::GetArgC() >= 1);
-
-	/* Inherit parent process args. */
-	Array::Ptr args = new Array({
-		Application::GetExePath(Application::GetArgV()[0]),
-	});
-
-	for (int i = 1; i < Application::GetArgC(); i++) {
-		String argV = Application::GetArgV()[i];
-
-		if (argV == "-d" || argV == "--daemonize")
-			continue;
-
-		args->Add(argV);
-	}
-
-	args->Add("--validate");
-
-	// Set the ZonesStageDir. This creates our own local chroot without any additional automated zone includes.
-	args->Add("--define");
-	args->Add("System.ZonesStageVarDir=" + GetApiZonesStageDir());
-
-	Process::Ptr process = new Process(Process::PrepareCommand(args));
-	process->SetTimeout(Application::GetReloadTimeout());
-	process->Run(std::bind(&TryActivateZonesStageCallback, _1, relativePaths));
 }
 
 /**
@@ -779,7 +799,7 @@ ConfigDirInformation ApiListener::LoadConfigDir(const String& dir)
 	config.UpdateV2 = new Dictionary();
 	config.Checksums = new Dictionary();
 
-	Utility::GlobRecursive(dir, "*", std::bind(&ApiListener::ConfigGlobHandler, std::ref(config), dir, _1), GlobFile);
+	Utility::GlobRecursive(dir, "*", [&config, dir](const String& file) { ConfigGlobHandler(config, dir, file); }, GlobFile);
 	return config;
 }
 
@@ -797,7 +817,7 @@ void ApiListener::ConfigGlobHandler(ConfigDirInformation& config, const String& 
 	if (Utility::BaseName(file) == ".authoritative")
 		return;
 
-	CONTEXT("Creating config update for file '" + file + "'");
+	CONTEXT("Creating config update for file '" << file << "'");
 
 	Log(LogNotice, "ApiListener")
 		<< "Creating config update for file '" << file << "'.";

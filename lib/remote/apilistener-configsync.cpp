@@ -72,6 +72,16 @@ Value ApiListener::ConfigUpdateObjectAPIHandler(const MessageOrigin::Ptr& origin
 		return Empty;
 	}
 
+	String objZone = params->Get("zone");
+
+	if (!objZone.IsEmpty() && !Zone::GetByName(objZone)) {
+		Log(LogNotice, "ApiListener")
+			<< "Discarding 'config update object' message"
+			<< " from '" << identity << "' (endpoint: '" << endpoint->GetName() << "', zone: '" << endpointZone->GetName() << "')"
+			<< " for object '" << objName << "' of type '" << objType << "'. Objects zone '" << objZone << "' isn't known locally.";
+		return Empty;
+	}
+
 	/* ignore messages if the endpoint does not accept config */
 	if (!listener->GetAcceptConfig()) {
 		Log(LogWarning, "ApiListener")
@@ -316,18 +326,13 @@ void ApiListener::UpdateConfigObject(const ConfigObject::Ptr& object, const Mess
 	params->Set("type", object->GetReflectionType()->GetName());
 	params->Set("version", object->GetVersion());
 
+	String zoneName = object->GetZoneName();
+
+	if (!zoneName.IsEmpty())
+		params->Set("zone", zoneName);
+
 	if (object->GetPackage() == "_api") {
-		String file;
-
-		try {
-			file = ConfigObjectUtility::GetObjectConfigPath(object->GetReflectionType(), object->GetName());
-		} catch (const std::exception& ex) {
-			Log(LogNotice, "ApiListener")
-				<< "Cannot sync object '" << object->GetName() << "': " << ex.what();
-			return;
-		}
-
-		std::ifstream fp(file.CStr(), std::ifstream::binary);
+		std::ifstream fp(ConfigObjectUtility::GetExistingObjectConfigPath(object).CStr(), std::ifstream::binary);
 		if (!fp)
 			return;
 
@@ -423,7 +428,7 @@ void ApiListener::DeleteConfigObject(const ConfigObject::Ptr& object, const Mess
 		if (!target)
 			target = Zone::GetLocalZone();
 
-		RelayMessage(origin, target, message, false);
+		RelayMessage(origin, target, message, true);
 	}
 }
 

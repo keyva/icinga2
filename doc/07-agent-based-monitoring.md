@@ -64,7 +64,7 @@ an arbitrary plugin command line. The output and exit code is
 returned and used by the core.
 
 The `check_by_ssh` plugin takes care of this. It is available in the
-[Monitoring Plugins package](02-installation.md#setting-up-check-plugins).
+[Monitoring Plugins](https://www.monitoring-plugins.org/) package.
 For your convenience, the Icinga template library provides the [by_ssh](10-icinga-template-library.md#plugin-check-command-by-ssh)
 CheckCommand already.
 
@@ -73,7 +73,7 @@ CheckCommand already.
 SSH key pair for the Icinga daemon user. In case the user has no shell, temporarily enable this.
 When asked for a passphrase, **do not set it** and press enter.
 
-```
+```bash
 sudo su - icinga
 
 ssh-keygen -b 4096 -t rsa -C "icinga@$(hostname) user for check_by_ssh" -f $HOME/.ssh/id_rsa
@@ -81,7 +81,7 @@ ssh-keygen -b 4096 -t rsa -C "icinga@$(hostname) user for check_by_ssh" -f $HOME
 
 On the remote agent, create the icinga user and generate a temporary password.
 
-```
+```bash
 useradd -m icinga
 passwd icinga
 ```
@@ -90,7 +90,7 @@ Copy the public key from the Icinga server to the remote agent, e.g. with `ssh-c
 or manually into `/home/icinga/.ssh/authorized_keys`.
 This will ask for the password once.
 
-```
+```bash
 sudo su - icinga
 
 ssh-copy-id -i $HOME/.ssh/id_rsa icinga@ssh-agent1.localdomain
@@ -100,7 +100,7 @@ After the SSH key is copied, test at the connection **at least once** and
 accept the host key verification. If you forget about this step, checks will
 become UNKNOWN later.
 
-```
+```bash
 ssh -i $HOME/.ssh/id_rsa icinga@ssh-agent1.localdomain
 ```
 
@@ -171,7 +171,7 @@ A more advanced example with better arguments is shown in [this blogpost](https:
 ## SNMP <a id="agent-based-checks-snmp"></a>
 
 The SNMP daemon runs on the remote system and answers SNMP queries by plugin scripts.
-The [Monitoring Plugins package](02-installation.md#setting-up-check-plugins) provides
+The [Monitoring Plugins](https://www.monitoring-plugins.org/) package provides
 the `check_snmp` plugin binary, but there are plenty of [existing plugins](05-service-monitoring.md#service-monitoring-plugins)
 for specific use cases already around, for example monitoring Cisco routers.
 
@@ -273,7 +273,7 @@ Create the `coldstart_reset_event.sh` shell script to pass the expanded variable
 data in. The `$service.state_id$` is important in order to prevent an endless loop
 of event firing after the service has been reset.
 
-```
+```bash
 #!/bin/bash
 
 SERVICE_STATE_ID=""
@@ -475,13 +475,11 @@ For details on the `NSClient++` configuration please refer to the [official docu
 
 ## WMI on Windows <a id="agent-based-checks-wmi"></a>
 
-The most popular plugin is [check_wmi_plus](http://edcint.co.nz/checkwmiplus/).
+The most popular plugin is [check_wmi_plus](https://edcint.co.nz/checkwmiplus/).
 
 > Check WMI Plus uses the Windows Management Interface (WMI) to check for common services (cpu, disk, sevices, eventlog…) on Windows machines. It requires the open source wmi client for Linux.
 
 Community examples:
 
-* [Icinga 2 check_wmi_plus example by 18pct](http://18pct.com/icinga2-check_wmi_plus-example/)
+* [Icinga 2 check_wmi_plus example by 18pct](https://18pct.com/icinga2-check_wmi_plus-example/)
 * [Agent-less monitoring with WMI](https://www.devlink.de/linux/icinga2-nagios-agentless-monitoring-von-windows/)
-
-

@@ -50,14 +50,15 @@ public:
 
 	bool ResolveMacro(const String& macro, const CheckResult::Ptr& cr, Value *result) const override;
 
+	void OnAllConfigLoaded() override;
+
 protected:
 	void Stop(bool runtimeRemoved) override;
 
-	void OnAllConfigLoaded() override;
 	void CreateChildObjects(const Type::Ptr& childType) override;
 
 private:
-	mutable boost::mutex m_ServicesMutex;
+	mutable std::mutex m_ServicesMutex;
 	std::map<String, intrusive_ptr<Service> > m_Services;
 
 	static void RefreshServicesCache();

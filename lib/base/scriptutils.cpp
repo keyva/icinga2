@@ -71,11 +71,11 @@ enum MatchType
 
 void ScriptUtils::StaticInitialize()
 {
-	ScriptGlobal::Set("System.MatchAll", MatchAll, true);
-	ScriptGlobal::Set("System.MatchAny", MatchAny, true);
+	ScriptGlobal::Set("System.MatchAll", MatchAll);
+	ScriptGlobal::Set("System.MatchAny", MatchAny);
 
-	ScriptGlobal::Set("System.GlobFile", GlobFile, true);
-	ScriptGlobal::Set("System.GlobDirectory", GlobDirectory, true);
+	ScriptGlobal::Set("System.GlobFile", GlobFile);
+	ScriptGlobal::Set("System.GlobDirectory", GlobDirectory);
 }
 
 String ScriptUtils::CastString(const Value& value)
@@ -528,11 +528,6 @@ double ScriptUtils::Ptr(const Object::Ptr& object)
 	return reinterpret_cast<intptr_t>(object.get());
 }
 
-static void GlobCallbackHelper(std::vector<String>& paths, const String& path)
-{
-	paths.push_back(path);
-}
-
 Value ScriptUtils::Glob(const std::vector<Value>& args)
 {
 	if (args.size() < 1)
@@ -545,7 +540,7 @@ Value ScriptUtils::Glob(const std::vector<Value>& args)
 		type = args[1];
 
 	std::vector<String> paths;
-	Utility::Glob(pathSpec, std::bind(&GlobCallbackHelper, std::ref(paths), _1), type);
+	Utility::Glob(pathSpec, [&paths](const String& path) { paths.push_back(path); }, type);
 
 	return Array::FromVector(paths);
 }
@@ -564,7 +559,7 @@ Value ScriptUtils::GlobRecursive(const std::vector<Value>& args)
 		type = args[2];
 
 	std::vector<String> paths;
-	Utility::GlobRecursive(path, pattern, std::bind(&GlobCallbackHelper, std::ref(paths), _1), type);
+	Utility::GlobRecursive(path, pattern, [&paths](const String& newPath) { paths.push_back(newPath); }, type);
 
 	return Array::FromVector(paths);
 }

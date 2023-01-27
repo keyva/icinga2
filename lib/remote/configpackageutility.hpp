@@ -8,6 +8,8 @@
 #include "base/dictionary.hpp"
 #include "base/process.hpp"
 #include "base/string.hpp"
+#include "base/defer.hpp"
+#include "base/shared.hpp"
 #include <vector>
 
 namespace icinga
@@ -37,24 +39,33 @@ public:
 	static void SetActiveStage(const String& packageName, const String& stageName);
 	static void SetActiveStageToFile(const String& packageName, const String& stageName);
 	static void ActivateStage(const String& packageName, const String& stageName);
-	static void AsyncTryActivateStage(const String& packageName, const String& stageName, bool activate, bool reload);
+	static void AsyncTryActivateStage(const String& packageName, const String& stageName, bool activate, bool reload,
+		const Shared<Defer>::Ptr& resetPackageUpdates);
 
 	static std::vector<std::pair<String, bool> > GetFiles(const String& packageName, const String& stageName);
 
 	static bool ContainsDotDot(const String& path);
-	static bool ValidateName(const String& name);
+	static bool ValidatePackageName(const String& packageName);
 
-	static boost::mutex& GetStaticPackageMutex();
-	static boost::mutex& GetStaticActiveStageMutex();
+	static inline
+	bool ValidateStageName(const String& stageName)
+	{
+		return ValidateFreshName(stageName);
+	}
+
+	static std::mutex& GetStaticPackageMutex();
+	static std::mutex& GetStaticActiveStageMutex();
 
 private:
-	static void CollectDirNames(const String& path, std::vector<String>& dirs);
 	static void CollectPaths(const String& path, std::vector<std::pair<String, bool> >& paths);
 
 	static void WritePackageConfig(const String& packageName);
 	static void WriteStageConfig(const String& packageName, const String& stageName);
 
-	static void TryActivateStageCallback(const ProcessResult& pr, const String& packageName, const String& stageName, bool activate, bool reload);
+	static void TryActivateStageCallback(const ProcessResult& pr, const String& packageName, const String& stageName, bool activate,
+		bool reload, const Shared<Defer>::Ptr& resetPackageUpdates);
+
+	static bool ValidateFreshName(const String& name);
 };
 
 }

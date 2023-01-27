@@ -16,12 +16,12 @@ INITIALIZE_ONCE([]() {
 	ApplyRule::RegisterType("ScheduledDowntime", { "Host", "Service" });
 });
 
-bool ScheduledDowntime::EvaluateApplyRuleInstance(const Checkable::Ptr& checkable, const String& name, ScriptFrame& frame, const ApplyRule& rule)
+bool ScheduledDowntime::EvaluateApplyRuleInstance(const Checkable::Ptr& checkable, const String& name, ScriptFrame& frame, const ApplyRule& rule, bool skipFilter)
 {
-	if (!rule.EvaluateFilter(frame))
+	if (!skipFilter && !rule.EvaluateFilter(frame))
 		return false;
 
-	DebugInfo di = rule.GetDebugInfo();
+	auto& di (rule.GetDebugInfo());
 
 #ifdef _DEBUG
 	Log(LogDebug, "ScheduledDowntime")
@@ -33,6 +33,8 @@ bool ScheduledDowntime::EvaluateApplyRuleInstance(const Checkable::Ptr& checkabl
 	builder.SetName(name);
 	builder.SetScope(frame.Locals->ShallowClone());
 	builder.SetIgnoreOnError(rule.GetIgnoreOnError());
+
+	builder.AddExpression(new ImportDefaultTemplatesExpression());
 
 	Host::Ptr host;
 	Service::Ptr service;
@@ -52,21 +54,17 @@ bool ScheduledDowntime::EvaluateApplyRuleInstance(const Checkable::Ptr& checkabl
 
 	builder.AddExpression(new OwnedExpression(rule.GetExpression()));
 
-	builder.AddExpression(new ImportDefaultTemplatesExpression());
-
 	ConfigItem::Ptr downtimeItem = builder.Compile();
 	downtimeItem->Register();
 
 	return true;
 }
 
-bool ScheduledDowntime::EvaluateApplyRule(const Checkable::Ptr& checkable, const ApplyRule& rule)
+bool ScheduledDowntime::EvaluateApplyRule(const Checkable::Ptr& checkable, const ApplyRule& rule, bool skipFilter)
 {
-	DebugInfo di = rule.GetDebugInfo();
+	auto& di (rule.GetDebugInfo());
 
-	std::ostringstream msgbuf;
-	msgbuf << "Evaluating 'apply' rule (" << di << ")";
-	CONTEXT(msgbuf.str());
+	CONTEXT("Evaluating 'apply' rule (" << di << ")");
 
 	Host::Ptr host;
 	Service::Ptr service;
@@ -109,7 +107,7 @@ bool ScheduledDowntime::EvaluateApplyRule(const Checkable::Ptr& checkable, const
 				name += instance;
 			}
 
-			if (EvaluateApplyRuleInstance(checkable, name, frame, rule))
+			if (EvaluateApplyRuleInstance(checkable, name, frame, rule, skipFilter))
 				match = true;
 		}
 	} else if (vinstances.IsObjectType<Dictionary>()) {
@@ -122,7 +120,7 @@ bool ScheduledDowntime::EvaluateApplyRule(const Checkable::Ptr& checkable, const
 			frame.Locals->Set(rule.GetFKVar(), key);
 			frame.Locals->Set(rule.GetFVVar(), dict->Get(key));
 
-			if (EvaluateApplyRuleInstance(checkable, rule.GetName() + key, frame, rule))
+			if (EvaluateApplyRuleInstance(checkable, rule.GetName() + key, frame, rule, skipFilter))
 				match = true;
 		}
 	}
@@ -132,26 +130,30 @@ bool ScheduledDowntime::EvaluateApplyRule(const Checkable::Ptr& checkable, const
 
 void ScheduledDowntime::EvaluateApplyRules(const Host::Ptr& host)
 {
-	CONTEXT("Evaluating 'apply' rules for host '" + host->GetName() + "'");
+	CONTEXT("Evaluating 'apply' rules for host '" << host->GetName() << "'");
 
-	for (ApplyRule& rule : ApplyRule::GetRules("ScheduledDowntime")) {
-		if (rule.GetTargetType() != "Host")
-			continue;
+	for (auto& rule : ApplyRule::GetRules(ScheduledDowntime::TypeInstance, Host::TypeInstance)) {
+		if (EvaluateApplyRule(host, *rule))
+			rule->AddMatch();
+	}
 
-		if (EvaluateApplyRule(host, rule))
-			rule.AddMatch();
+	for (auto& rule : ApplyRule::GetTargetedHostRules(ScheduledDowntime::TypeInstance, host->GetName())) {
+		if (EvaluateApplyRule(host, *rule, true))
+			rule->AddMatch();
 	}
 }
 
 void ScheduledDowntime::EvaluateApplyRules(const Service::Ptr& service)
 {
-	CONTEXT("Evaluating 'apply' rules for service '" + service->GetName() + "'");
+	CONTEXT("Evaluating 'apply' rules for service '" << service->GetName() << "'");
 
-	for (ApplyRule& rule : ApplyRule::GetRules("ScheduledDowntime")) {
-		if (rule.GetTargetType() != "Service")
-			continue;
+	for (auto& rule : ApplyRule::GetRules(ScheduledDowntime::TypeInstance, Service::TypeInstance)) {
+		if (EvaluateApplyRule(service, *rule))
+			rule->AddMatch();
+	}
 
-		if (EvaluateApplyRule(service, rule))
-			rule.AddMatch();
+	for (auto& rule : ApplyRule::GetTargetedServiceRules(ScheduledDowntime::TypeInstance, service->GetHost()->GetName(), service->GetShortName())) {
+		if (EvaluateApplyRule(service, *rule, true))
+			rule->AddMatch();
 	}
 }

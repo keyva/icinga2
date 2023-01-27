@@ -1,5 +1,6 @@
 /* Icinga 2 | (c) 2012 Icinga GmbH | GPLv2+ */
 
+#include "base/atomic-file.hpp"
 #include "base/configobject.hpp"
 #include "base/configobject-ti.cpp"
 #include "base/configtype.hpp"
@@ -351,7 +352,7 @@ void ConfigObject::Start(bool runtimeCreated)
 
 void ConfigObject::PreActivate()
 {
-	CONTEXT("Setting 'active' to true for object '" + GetName() + "' of type '" + GetReflectionType()->GetName() + "'");
+	CONTEXT("Setting 'active' to true for object '" << GetName() << "' of type '" << GetReflectionType()->GetName() << "'");
 
 	ASSERT(!IsActive());
 	SetActive(true, true);
@@ -359,7 +360,7 @@ void ConfigObject::PreActivate()
 
 void ConfigObject::Activate(bool runtimeCreated, const Value& cookie)
 {
-	CONTEXT("Activating object '" + GetName() + "' of type '" + GetReflectionType()->GetName() + "'");
+	CONTEXT("Activating object '" << GetName() << "' of type '" << GetReflectionType()->GetName() << "'");
 
 	{
 		ObjectLock olock(this);
@@ -386,7 +387,7 @@ void ConfigObject::Stop(bool runtimeRemoved)
 
 void ConfigObject::Deactivate(bool runtimeRemoved, const Value& cookie)
 {
-	CONTEXT("Deactivating object '" + GetName() + "' of type '" + GetReflectionType()->GetName() + "'");
+	CONTEXT("Deactivating object '" << GetName() << "' of type '" << GetReflectionType()->GetName() << "'");
 
 	{
 		ObjectLock olock(this);
@@ -413,13 +414,7 @@ void ConfigObject::OnConfigLoaded()
 
 void ConfigObject::OnAllConfigLoaded()
 {
-	static ConfigType *ctype;
-
-	if (!ctype) {
-		Type::Ptr type = Type::GetByName("Zone");
-		ctype = dynamic_cast<ConfigType *>(type.get());
-	}
-
+	static ConfigType *ctype = dynamic_cast<ConfigType *>(Type::GetByName("Zone").get());
 	String zoneName = GetZoneName();
 
 	if (!zoneName.IsEmpty())
@@ -468,13 +463,13 @@ void ConfigObject::DumpObjects(const String& filename, int attributeTypes)
 	Log(LogInformation, "ConfigObject")
 		<< "Dumping program state to file '" << filename << "'";
 
-	std::fstream fp;
-	String tempFilename = Utility::CreateTempFile(filename + ".XXXXXX", 0600, fp);
-	fp.exceptions(std::ofstream::failbit | std::ofstream::badbit);
+	try {
+		Utility::Glob(filename + ".tmp.*", &Utility::Remove, GlobFile);
+	} catch (const std::exception& ex) {
+		Log(LogWarning, "ConfigObject") << DiagnosticInformation(ex);
+	}
 
-	if (!fp)
-		BOOST_THROW_EXCEPTION(std::runtime_error("Could not open '" + tempFilename + "' file"));
-
+	AtomicFile fp (filename, 0600);
 	StdioStream::Ptr sfp = new StdioStream(&fp, false);
 
 	for (const Type::Ptr& type : Type::GetAllTypes()) {
@@ -502,10 +497,7 @@ void ConfigObject::DumpObjects(const String& filename, int attributeTypes)
 	}
 
 	sfp->Close();
-
-	fp.close();
-
-	Utility::RenameFile(tempFilename, filename);
+	fp.Commit();
 }
 
 void ConfigObject::RestoreObject(const String& message, int attributeTypes)
@@ -559,7 +551,7 @@ void ConfigObject::RestoreObjects(const String& filename, int attributeTypes)
 		if (srs != StatusNewItem)
 			continue;
 
-		upq.Enqueue(std::bind(&ConfigObject::RestoreObject, message, attributeTypes));
+		upq.Enqueue([message, attributeTypes]() { RestoreObject(message, attributeTypes); });
 		restored++;
 	}
 

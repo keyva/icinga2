@@ -45,11 +45,11 @@ void CheckResultReader::Start(bool runtimeCreated)
 		<< "'" << GetName() << "' started.";
 
 	Log(LogWarning, "CheckResultReader")
-		<< "This feature is DEPRECATED and will be removed in future releases. Check the roadmap at https://github.com/Icinga/icinga2/milestones";
+		<< "This feature is DEPRECATED and may be removed in future releases. Check the roadmap at https://github.com/Icinga/icinga2/milestones";
 
 #ifndef _WIN32
 	m_ReadTimer = new Timer();
-	m_ReadTimer->OnTimerExpired.connect(std::bind(&CheckResultReader::ReadTimerHandler, this));
+	m_ReadTimer->OnTimerExpired.connect([this](const Timer * const&) { ReadTimerHandler(); });
 	m_ReadTimer->SetInterval(5);
 	m_ReadTimer->Start();
 #endif /* _WIN32 */
@@ -71,14 +71,14 @@ void CheckResultReader::Stop(bool runtimeRemoved)
  */
 void CheckResultReader::ReadTimerHandler() const
 {
-	CONTEXT("Processing check result files in '" + GetSpoolDir() + "'");
+	CONTEXT("Processing check result files in '" << GetSpoolDir() << "'");
 
-	Utility::Glob(GetSpoolDir() + "/c??????.ok", std::bind(&CheckResultReader::ProcessCheckResultFile, this, _1), GlobFile);
+	Utility::Glob(GetSpoolDir() + "/c??????.ok", [this](const String& path) { ProcessCheckResultFile(path); }, GlobFile);
 }
 
 void CheckResultReader::ProcessCheckResultFile(const String& path) const
 {
-	CONTEXT("Processing check result file '" + path + "'");
+	CONTEXT("Processing check result file '" << path << "'");
 
 	String crfile = String(path.Begin(), path.End() - 3); /* Remove the ".ok" extension. */
 

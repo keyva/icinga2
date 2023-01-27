@@ -21,14 +21,16 @@
 #include "base/function.hpp"
 #include "base/utility.hpp"
 #include <boost/algorithm/string/join.hpp>
+#include <atomic>
 #include <sstream>
 #include <fstream>
 #include <algorithm>
 #include <random>
+#include <unordered_map>
 
 using namespace icinga;
 
-boost::mutex ConfigItem::m_Mutex;
+std::mutex ConfigItem::m_Mutex;
 ConfigItem::TypeMap ConfigItem::m_Items;
 ConfigItem::TypeMap ConfigItem::m_DefaultTemplates;
 ConfigItem::ItemList ConfigItem::m_UnnamedItems;
@@ -195,7 +197,7 @@ ConfigObject::Ptr ConfigItem::Commit(bool discard)
 				<< "Ignoring config object '" << m_Name << "' of type '" << type->GetName() << "' due to errors: " << DiagnosticInformation(ex);
 
 			{
-				boost::mutex::scoped_lock lock(m_Mutex);
+				std::unique_lock<std::mutex> lock(m_Mutex);
 				m_IgnoredItems.push_back(m_DebugInfo.Path);
 			}
 
@@ -247,7 +249,7 @@ ConfigObject::Ptr ConfigItem::Commit(bool discard)
 				<< "Ignoring config object '" << m_Name << "' of type '" << type->GetName() << "' due to errors: " << DiagnosticInformation(ex);
 
 			{
-				boost::mutex::scoped_lock lock(m_Mutex);
+				std::unique_lock<std::mutex> lock(m_Mutex);
 				m_IgnoredItems.push_back(m_DebugInfo.Path);
 			}
 
@@ -266,7 +268,7 @@ ConfigObject::Ptr ConfigItem::Commit(bool discard)
 				<< "Ignoring config object '" << m_Name << "' of type '" << m_Type->GetName() << "' due to errors: " << DiagnosticInformation(ex);
 
 			{
-				boost::mutex::scoped_lock lock(m_Mutex);
+				std::unique_lock<std::mutex> lock(m_Mutex);
 				m_IgnoredItems.push_back(m_DebugInfo.Path);
 			}
 
@@ -279,29 +281,34 @@ ConfigObject::Ptr ConfigItem::Commit(bool discard)
 	Value serializedObject;
 
 	try {
-		serializedObject = Serialize(dobj, FAConfig);
+		if (ConfigCompilerContext::GetInstance()->IsOpen()) {
+			serializedObject = Serialize(dobj, FAConfig);
+		} else {
+			AssertNoCircularReferences(dobj);
+		}
 	} catch (const CircularReferenceError& ex) {
 		BOOST_THROW_EXCEPTION(ValidationError(dobj, ex.GetPath(), "Circular references are not allowed"));
 	}
 
-	Dictionary::Ptr persistentItem = new Dictionary({
-		{ "type", type->GetName() },
-		{ "name", GetName() },
-		{ "properties", Serialize(dobj, FAConfig) },
-		{ "debug_hints", dhint },
-		{ "debug_info", new Array({
-			m_DebugInfo.Path,
-			m_DebugInfo.FirstLine,
-			m_DebugInfo.FirstColumn,
-			m_DebugInfo.LastLine,
-			m_DebugInfo.LastColumn,
-		}) }
-	});
+	if (ConfigCompilerContext::GetInstance()->IsOpen()) {
+		Dictionary::Ptr persistentItem = new Dictionary({
+			{ "type", type->GetName() },
+			{ "name", GetName() },
+			{ "properties", serializedObject },
+			{ "debug_hints", dhint },
+			{ "debug_info", new Array({
+				m_DebugInfo.Path,
+				m_DebugInfo.FirstLine,
+				m_DebugInfo.FirstColumn,
+				m_DebugInfo.LastLine,
+				m_DebugInfo.LastColumn,
+			}) }
+		});
+
+		ConfigCompilerContext::GetInstance()->WriteObject(persistentItem);
+	}
 
 	dhint.reset();
-
-	ConfigCompilerContext::GetInstance()->WriteObject(persistentItem);
-	persistentItem.reset();
 
 	dobj->Register();
 
@@ -317,7 +324,7 @@ void ConfigItem::Register()
 {
 	m_ActivationContext = ActivationContext::GetCurrentContext();
 
-	boost::mutex::scoped_lock lock(m_Mutex);
+	std::unique_lock<std::mutex> lock(m_Mutex);
 
 	/* If this is a non-abstract object with a composite name
 	 * we register it in m_UnnamedItems instead of m_Items. */
@@ -353,7 +360,7 @@ void ConfigItem::Unregister()
 		m_Object.reset();
 	}
 
-	boost::mutex::scoped_lock lock(m_Mutex);
+	std::unique_lock<std::mutex> lock(m_Mutex);
 	m_UnnamedItems.erase(std::remove(m_UnnamedItems.begin(), m_UnnamedItems.end(), this), m_UnnamedItems.end());
 	m_Items[m_Type].erase(m_Name);
 	m_DefaultTemplates[m_Type].erase(m_Name);
@@ -368,7 +375,7 @@ void ConfigItem::Unregister()
  */
 ConfigItem::Ptr ConfigItem::GetByTypeAndName(const Type::Ptr& type, const String& name)
 {
-	boost::mutex::scoped_lock lock(m_Mutex);
+	std::unique_lock<std::mutex> lock(m_Mutex);
 
 	auto it = m_Items.find(type);
 
@@ -386,12 +393,15 @@ ConfigItem::Ptr ConfigItem::GetByTypeAndName(const Type::Ptr& type, const String
 bool ConfigItem::CommitNewItems(const ActivationContext::Ptr& context, WorkQueue& upq, std::vector<ConfigItem::Ptr>& newItems)
 {
 	typedef std::pair<ConfigItem::Ptr, bool> ItemPair;
-	std::vector<ItemPair> items;
+	std::unordered_map<Type*, std::vector<ItemPair>> itemsByType;
+	std::vector<ItemPair>::size_type total = 0;
 
 	{
-		boost::mutex::scoped_lock lock(m_Mutex);
+		std::unique_lock<std::mutex> lock(m_Mutex);
 
 		for (const TypeMap::value_type& kv : m_Items) {
+			std::vector<ItemPair> items;
+
 			for (const ItemMap::value_type& kv2 : kv.second) {
 				if (kv2.second->m_Abstract || kv2.second->m_Object)
 					continue;
@@ -400,6 +410,11 @@ bool ConfigItem::CommitNewItems(const ActivationContext::Ptr& context, WorkQueue
 					continue;
 
 				items.emplace_back(kv2.second, false);
+			}
+
+			if (!items.empty()) {
+				total += items.size();
+				itemsByType.emplace(kv.first.get(), std::move(items));
 			}
 		}
 
@@ -414,29 +429,30 @@ bool ConfigItem::CommitNewItems(const ActivationContext::Ptr& context, WorkQueue
 			if (item->m_Abstract || item->m_Object)
 				continue;
 
-			items.emplace_back(item, true);
+			itemsByType[item->m_Type.get()].emplace_back(item, true);
+			++total;
 		}
 
 		m_UnnamedItems.swap(newUnnamedItems);
 	}
 
-	if (items.empty())
+	if (!total)
 		return true;
 
 	// Shuffle all items to evenly distribute them over the threads of the workqueue. This increases perfomance
 	// noticably in environments with lots of objects and available threads.
-	std::shuffle(std::begin(items), std::end(items), std::default_random_engine {});
+	for (auto& kv : itemsByType) {
+		std::shuffle(std::begin(kv.second), std::end(kv.second), std::default_random_engine{});
+	}
 
 #ifdef I2_DEBUG
 	Log(LogDebug, "configitem")
-		<< "Committing " << items.size() << " new items.";
+		<< "Committing " << total << " new items.";
 #endif /* I2_DEBUG */
-
-	for (const auto& ip : items)
-		newItems.push_back(ip.first);
 
 	std::set<Type::Ptr> types;
 	std::set<Type::Ptr> completed_types;
+	int itemsCount {0};
 
 	for (const Type::Ptr& type : Type::GetAllTypes()) {
 		if (ConfigObject::TypeInstance->IsAssignableFrom(type))
@@ -451,8 +467,7 @@ bool ConfigItem::CommitNewItems(const ActivationContext::Ptr& context, WorkQueue
 			bool unresolved_dep = false;
 
 			/* skip this type (for now) if there are unresolved load dependencies */
-			for (const String& loadDep : type->GetLoadDependencies()) {
-				Type::Ptr pLoadDep = Type::GetByName(loadDep);
+			for (auto pLoadDep : type->GetLoadDependencies()) {
 				if (types.find(pLoadDep) != types.end() && completed_types.find(pLoadDep) == completed_types.end()) {
 					unresolved_dep = true;
 					break;
@@ -462,18 +477,35 @@ bool ConfigItem::CommitNewItems(const ActivationContext::Ptr& context, WorkQueue
 			if (unresolved_dep)
 				continue;
 
-			int committed_items = 0;
-			upq.ParallelFor(items, [&type, &committed_items](const ItemPair& ip) {
-				const ConfigItem::Ptr& item = ip.first;
+			std::atomic<int> committed_items(0);
+			std::mutex newItemsMutex;
 
-				if (item->m_Type != type)
-					return;
+			{
+				auto items (itemsByType.find(type.get()));
 
-				ip.first->Commit(ip.second);
-				committed_items++;
-			});
+				if (items != itemsByType.end()) {
+					upq.ParallelFor(items->second, [&committed_items, &newItems, &newItemsMutex](const ItemPair& ip) {
+						const ConfigItem::Ptr& item = ip.first;
 
-			upq.Join();
+						if (!item->Commit(ip.second)) {
+							if (item->IsIgnoreOnError()) {
+								item->Unregister();
+							}
+
+							return;
+						}
+
+						committed_items++;
+
+						std::unique_lock<std::mutex> lock(newItemsMutex);
+						newItems.emplace_back(item);
+					});
+
+					upq.Join();
+				}
+			}
+
+			itemsCount += committed_items;
 
 			completed_types.insert(type);
 
@@ -490,7 +522,7 @@ bool ConfigItem::CommitNewItems(const ActivationContext::Ptr& context, WorkQueue
 
 #ifdef I2_DEBUG
 	Log(LogDebug, "configitem")
-		<< "Committed " << items.size() << " items.";
+		<< "Committed " << itemsCount << " items.";
 #endif /* I2_DEBUG */
 
 	completed_types.clear();
@@ -503,8 +535,7 @@ bool ConfigItem::CommitNewItems(const ActivationContext::Ptr& context, WorkQueue
 			bool unresolved_dep = false;
 
 			/* skip this type (for now) if there are unresolved load dependencies */
-			for (const String& loadDep : type->GetLoadDependencies()) {
-				Type::Ptr pLoadDep = Type::GetByName(loadDep);
+			for (auto pLoadDep : type->GetLoadDependencies()) {
 				if (types.find(pLoadDep) != types.end() && completed_types.find(pLoadDep) == completed_types.end()) {
 					unresolved_dep = true;
 					break;
@@ -514,35 +545,42 @@ bool ConfigItem::CommitNewItems(const ActivationContext::Ptr& context, WorkQueue
 			if (unresolved_dep)
 				continue;
 
-			int notified_items = 0;
-			upq.ParallelFor(items, [&type, &notified_items](const ItemPair& ip) {
-				const ConfigItem::Ptr& item = ip.first;
+			std::atomic<int> notified_items(0);
 
-				if (!item->m_Object || item->m_Type != type)
-					return;
+			{
+				auto items (itemsByType.find(type.get()));
 
-				try {
-					item->m_Object->OnAllConfigLoaded();
-					notified_items++;
-				} catch (const std::exception& ex) {
-					if (!item->m_IgnoreOnError)
-						throw;
+				if (items != itemsByType.end()) {
+					upq.ParallelFor(items->second, [&notified_items](const ItemPair& ip) {
+						const ConfigItem::Ptr& item = ip.first;
 
-					Log(LogNotice, "ConfigObject")
-						<< "Ignoring config object '" << item->m_Name << "' of type '" << item->m_Type->GetName() << "' due to errors: " << DiagnosticInformation(ex);
+						if (!item->m_Object)
+							return;
 
-					item->Unregister();
+						try {
+							item->m_Object->OnAllConfigLoaded();
+							notified_items++;
+						} catch (const std::exception& ex) {
+							if (!item->m_IgnoreOnError)
+								throw;
 
-					{
-						boost::mutex::scoped_lock lock(item->m_Mutex);
-						item->m_IgnoredItems.push_back(item->m_DebugInfo.Path);
-					}
+							Log(LogNotice, "ConfigObject")
+								<< "Ignoring config object '" << item->m_Name << "' of type '" << item->m_Type->GetName() << "' due to errors: " << DiagnosticInformation(ex);
+
+							item->Unregister();
+
+							{
+								std::unique_lock<std::mutex> lock(item->m_Mutex);
+								item->m_IgnoredItems.push_back(item->m_DebugInfo.Path);
+							}
+						}
+					});
+
+					upq.Join();
 				}
-			});
+			}
 
 			completed_types.insert(type);
-
-			upq.Join();
 
 #ifdef I2_DEBUG
 			if (notified_items > 0)
@@ -554,17 +592,21 @@ bool ConfigItem::CommitNewItems(const ActivationContext::Ptr& context, WorkQueue
 				return false;
 
 			notified_items = 0;
-			for (const String& loadDep : type->GetLoadDependencies()) {
-				upq.ParallelFor(items, [loadDep, &type, &notified_items](const ItemPair& ip) {
-					const ConfigItem::Ptr& item = ip.first;
+			for (auto loadDep : type->GetLoadDependencies()) {
+				auto items (itemsByType.find(loadDep));
 
-					if (!item->m_Object || item->m_Type->GetName() != loadDep)
-						return;
+				if (items != itemsByType.end()) {
+					upq.ParallelFor(items->second, [&type, &notified_items](const ItemPair& ip) {
+						const ConfigItem::Ptr& item = ip.first;
 
-					ActivationScope ascope(item->m_ActivationContext);
-					item->m_Object->CreateChildObjects(type);
-					notified_items++;
-				});
+						if (!item->m_Object)
+							return;
+
+						ActivationScope ascope(item->m_ActivationContext);
+						item->m_Object->CreateChildObjects(type);
+						notified_items++;
+					});
+				}
 			}
 
 			upq.Join();
@@ -624,11 +666,21 @@ bool ConfigItem::CommitItems(const ActivationContext::Ptr& context, WorkQueue& u
 	return true;
 }
 
-bool ConfigItem::ActivateItems(WorkQueue& upq, const std::vector<ConfigItem::Ptr>& newItems, bool runtimeCreated,
-	bool silent, bool withModAttrs, const Value& cookie)
+/**
+ * ActivateItems activates new config items.
+ *
+ * @param newItems Vector of items to be activated
+ * @param runtimeCreated Whether the objects were created by a runtime object
+ * @param mainConfigActivation Whether this is the call for activating the main configuration during startup
+ * @param withModAttrs Whether this call shall read the modified attributes file
+ * @param cookie Cookie for preventing message loops
+ * @return Whether the config activation was successful (in case of errors, exceptions are thrown)
+ */
+bool ConfigItem::ActivateItems(const std::vector<ConfigItem::Ptr>& newItems, bool runtimeCreated,
+	bool mainConfigActivation, bool withModAttrs, const Value& cookie)
 {
-	static boost::mutex mtx;
-	boost::mutex::scoped_lock lock(mtx);
+	static std::mutex mtx;
+	std::unique_lock<std::mutex> lock(mtx);
 
 	if (withModAttrs) {
 		/* restore modified attributes */
@@ -663,7 +715,7 @@ bool ConfigItem::ActivateItems(WorkQueue& upq, const std::vector<ConfigItem::Ptr
 		object->PreActivate();
 	}
 
-	if (!silent)
+	if (mainConfigActivation)
 		Log(LogInformation, "ConfigItem", "Triggering Start signal for config items");
 
 	/* Activate objects in priority order. */
@@ -674,6 +726,14 @@ bool ConfigItem::ActivateItems(WorkQueue& upq, const std::vector<ConfigItem::Ptr
 			return true;
 		return false;
 	});
+
+	/* Find the last logger type to be activated. */
+	Type::Ptr lastLoggerType = nullptr;
+	for (const Type::Ptr& type : types) {
+		if (Logger::TypeInstance->IsAssignableFrom(type)) {
+			lastLoggerType = type;
+		}
+	}
 
 	for (const Type::Ptr& type : types) {
 		for (const ConfigItem::Ptr& item : newItems) {
@@ -695,27 +755,14 @@ bool ConfigItem::ActivateItems(WorkQueue& upq, const std::vector<ConfigItem::Ptr
 
 			object->Activate(runtimeCreated, cookie);
 		}
+
+		if (mainConfigActivation && type == lastLoggerType) {
+			/* Disable early logging configuration once the last logger type was activated. */
+			Logger::DisableEarlyLogging();
+		}
 	}
 
-	upq.Join();
-
-	if (upq.HasExceptions()) {
-		upq.ReportExceptions("ConfigItem");
-		return false;
-	}
-
-#ifdef I2_DEBUG
-	for (const ConfigItem::Ptr& item : newItems) {
-		ConfigObject::Ptr object = item->m_Object;
-
-		if (!object)
-			continue;
-
-		ASSERT(object && object->IsActive());
-	}
-#endif /* I2_DEBUG */
-
-	if (!silent)
+	if (mainConfigActivation)
 		Log(LogInformation, "ConfigItem", "Activated all objects.");
 
 	return true;
@@ -738,7 +785,7 @@ bool ConfigItem::RunWithActivationContext(const Function::Ptr& function)
 	if (!CommitItems(scope.GetContext(), upq, newItems, true))
 		return false;
 
-	if (!ActivateItems(upq, newItems, false, true))
+	if (!ActivateItems(newItems, false, false))
 		return false;
 
 	return true;
@@ -748,7 +795,7 @@ std::vector<ConfigItem::Ptr> ConfigItem::GetItems(const Type::Ptr& type)
 {
 	std::vector<ConfigItem::Ptr> items;
 
-	boost::mutex::scoped_lock lock(m_Mutex);
+	std::unique_lock<std::mutex> lock(m_Mutex);
 
 	auto it = m_Items.find(type);
 
@@ -768,7 +815,7 @@ std::vector<ConfigItem::Ptr> ConfigItem::GetDefaultTemplates(const Type::Ptr& ty
 {
 	std::vector<ConfigItem::Ptr> items;
 
-	boost::mutex::scoped_lock lock(m_Mutex);
+	std::unique_lock<std::mutex> lock(m_Mutex);
 
 	auto it = m_DefaultTemplates.find(type);
 
@@ -786,7 +833,7 @@ std::vector<ConfigItem::Ptr> ConfigItem::GetDefaultTemplates(const Type::Ptr& ty
 
 void ConfigItem::RemoveIgnoredItems(const String& allowedConfigPath)
 {
-	boost::mutex::scoped_lock lock(m_Mutex);
+	std::unique_lock<std::mutex> lock(m_Mutex);
 
 	for (const String& path : m_IgnoredItems) {
 		if (path.Find(allowedConfigPath) == String::NPos)

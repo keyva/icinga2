@@ -26,7 +26,7 @@ CpuBoundWork::CpuBoundWork(boost::asio::yield_context yc)
 
 		if (availableSlots < 1) {
 			ioEngine.m_CpuBoundSemaphore.fetch_add(1);
-			ioEngine.m_AlreadyExpiredTimer.async_wait(yc);
+			IoEngine::YieldCurrentCoroutine(yc);
 			continue;
 		}
 
@@ -65,7 +65,7 @@ IoBoundWorkSlot::~IoBoundWorkSlot()
 
 		if (availableSlots < 1) {
 			ioEngine.m_CpuBoundSemaphore.fetch_add(1);
-			ioEngine.m_AlreadyExpiredTimer.async_wait(yc);
+			IoEngine::YieldCurrentCoroutine(yc);
 			continue;
 		}
 
@@ -144,4 +144,12 @@ void AsioConditionVariable::Wait(boost::asio::yield_context yc)
 {
 	boost::system::error_code ec;
 	m_Timer.async_wait(yc[ec]);
+}
+
+void Timeout::Cancel()
+{
+	m_Cancelled.store(true);
+
+	boost::system::error_code ec;
+	m_Timer.cancel(ec);
 }

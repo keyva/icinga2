@@ -1219,7 +1219,7 @@ more object attributes which can be e.g. seen in external interfaces.
   /* Calculate some additional object attributes after populating the `vars` dictionary */
   notes = "Interface check for " + interface_name + " (units: '" + interface_config.iftraffic_units + "') in VLAN '" + vars.vlan + "' with ' QoS '" + vars.qos + "'"
   notes_url = "https://foreman.company.com/hosts/" + host.name
-  action_url = "http://snmp.checker.company.com/" + host.name + "/if-" + interface_name
+  action_url = "https://snmp.checker.company.com/" + host.name + "/if-" + interface_name
 }
 ```
 
@@ -1331,7 +1331,7 @@ apply Service for (customer => config in host.vars.hosting) {
   notes = "Support contract: " + vars.support_contract + " for Customer " + vars.customer_name + " (" + vars.customer_id + ")."
 
   notes_url = "https://foreman.company.com/hosts/" + host.name
-  action_url = "http://snmp.checker.company.com/" + host.name + "/" + vars.customer_id
+  action_url = "https://snmp.checker.company.com/" + host.name + "/" + vars.customer_id
 }
 ```
 
@@ -1572,12 +1572,18 @@ send notifications to all group members.
 > Only users who have been notified of a problem before  (`Warning`, `Critical`, `Unknown`
 states for services, `Down` for hosts) will receive `Recovery` notifications.
 
-Icinga 2 v2.10 allows you to configure `Acknowledgement` and/or `Recovery`
+Icinga 2 v2.10 allows you to configure a `User` object with `Acknowledgement` and/or `Recovery`
 without a `Problem` notification. These notifications will be sent without
 any problem notifications beforehand, and can be used for e.g. ticket systems.
 
 ```
+object User "ticketadmin" {
+  display_name = "Ticket Admin"
+  enable_notifications = true
+  states = [ OK, Warning, Critical ]
   types = [ Acknowledgement, Recovery ]
+  email = "ticket@localhost"
+}
 ```
 
 ### Notifications: Users from Host/Service <a id="alert-notifications-users-host-service"></a>
@@ -1817,8 +1823,14 @@ Sometimes the problem in question should not be announced when the notification 
 (the object reaching the `HARD` state), but after a certain period. In Icinga 2
 you can use the `times` dictionary and set `begin = 15m` as key and value if you want to
 postpone the notification window for 15 minutes. Leave out the `end` key -- if not set,
-Icinga 2 will not check against any end time for this notification. Make sure to
-specify a relatively low notification `interval` to get notified soon enough again.
+Icinga 2 will not check against any end time for this notification.
+
+> **Note**
+>
+> Setting the `end` key to `0` will stop sending notifications immediately
+> when a problem occurs, effectively disabling the notification.
+
+Make sure to specify a relatively low notification `interval` to get notified soon enough again.
 
 ```
 apply Notification "mail" to Service {
@@ -1932,7 +1944,7 @@ The check command parameters for ITL provided plugin check command definitions a
 
 In order to practice passing command parameters you should [integrate your own plugin](03-monitoring-basics.md#command-plugin-integration).
 
-The following example will use `check_mysql` provided by the [Monitoring Plugins installation](02-installation.md#setting-up-check-plugins).
+The following example will use `check_mysql` provided by the [Monitoring Plugins](https://www.monitoring-plugins.org/).
 
 Define the default check command custom variables, for example `mysql_user` and `mysql_password`
 (freely definable naming schema) and optional their default threshold values. You can
@@ -2244,7 +2256,7 @@ The service specifies the [custom variable](03-monitoring-basics.md#custom-varia
 
 This results in this command line without the `--process` parameter:
 
-```
+```bash
 '/bin/icingacli' 'businessprocess' 'process' 'check' 'bp-shop-web'
 ```
 
@@ -2272,7 +2284,7 @@ This can be used for the following scenarios:
 Whenever a host/service object sets the `http_sni` [custom variable](03-monitoring-basics.md#custom-variables)
 to `true`, the parameter is added to the command line.
 
-```
+```bash
 '/usr/lib64/nagios/plugins/check_http' '--sni'
 ```
 
@@ -2311,7 +2323,7 @@ object Host "postgresql-cluster" {
 
 ... use the following command line:
 
-```
+```bash
 '/usr/lib64/nagios/plugins/check_postgres.pl' '-H' '192.168.56.200'
 ```
 
@@ -2454,7 +2466,7 @@ object CheckCommand "mysql" {
 The executed command line visible with `ps` or `top` looks like this and hides
 the database credentials in the user's environment.
 
-```
+```bash
 /usr/lib/nagios/plugins/check_mysql -H 192.168.56.101 -d icinga
 ```
 
@@ -2912,14 +2924,14 @@ object Service "businessprocess" {
 
 In order to test this scenario you can run:
 
-```
+```bash
 nc -l 8080
 ```
 
 This allows to catch the web request. You can also enable the [debug log](15-troubleshooting.md#troubleshooting-enable-debug-output)
 and search for the event command execution log message.
 
-```
+```bash
 tail -f /var/log/icinga2/debug.log | grep EventCommand
 ```
 

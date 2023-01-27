@@ -166,8 +166,6 @@ static int Main()
 		argv += 3;
 	}
 
-	Application::SetStartTime(Utility::GetTime());
-
 	/* Set thread title. */
 	Utility::SetThreadName("Main Thread", false);
 
@@ -281,17 +279,6 @@ static int Main()
 		}
 #endif /* RLIMIT_STACK */
 	}
-
-	/* Calculate additional global constants. */
-	ScriptGlobal::Set("System.PlatformKernel", Utility::GetPlatformKernel(), true);
-	ScriptGlobal::Set("System.PlatformKernelVersion", Utility::GetPlatformKernelVersion(), true);
-	ScriptGlobal::Set("System.PlatformName", Utility::GetPlatformName(), true);
-	ScriptGlobal::Set("System.PlatformVersion", Utility::GetPlatformVersion(), true);
-	ScriptGlobal::Set("System.PlatformArchitecture", Utility::GetPlatformArchitecture(), true);
-
-	ScriptGlobal::Set("System.BuildHostName", ICINGA_BUILD_HOST_NAME, true);
-	ScriptGlobal::Set("System.BuildCompilerName", ICINGA_BUILD_COMPILER_NAME, true);
-	ScriptGlobal::Set("System.BuildCompilerVersion", ICINGA_BUILD_COMPILER_VERSION, true);
 
 	if (!autocomplete)
 		Application::SetResourceLimits();
@@ -527,7 +514,7 @@ static int Main()
 			if (vm.count("version")) {
 				std::cout << "Copyright (c) 2012-" << Utility::FormatDateTime("%Y", Utility::GetTime())
 					<< " Icinga GmbH (https://icinga.com/)" << std::endl
-					<< "License GPLv2+: GNU GPL version 2 or later <http://gnu.org/licenses/gpl2.html>" << std::endl
+					<< "License GPLv2+: GNU GPL version 2 or later <https://gnu.org/licenses/gpl2.html>" << std::endl
 					<< "This is free software: you are free to change and redistribute it." << std::endl
 					<< "There is NO WARRANTY, to the extent permitted by law.";
 			}
@@ -908,24 +895,13 @@ int main(int argc, char **argv)
 #ifndef _WIN32
 	String keepFDs = Utility::GetFromEnvironment("ICINGA2_KEEP_FDS");
 	if (keepFDs.IsEmpty()) {
-		rlimit rl;
-		if (getrlimit(RLIMIT_NOFILE, &rl) >= 0) {
-			rlim_t maxfds = rl.rlim_max;
-
-			if (maxfds == RLIM_INFINITY)
-				maxfds = 65536;
-
-			for (rlim_t i = 3; i < maxfds; i++) {
-				int rc = close(i);
-
 #ifdef I2_DEBUG
-				if (rc >= 0)
-					std::cerr << "Closed FD " << i << " which we inherited from our parent process." << std::endl;
+		Utility::CloseAllFDs({0, 1, 2}, [](int fd) {
+			std::cerr << "Closed FD " << fd << " which we inherited from our parent process." << std::endl;
+		});
 #else /* I2_DEBUG */
-				(void)rc;
+		Utility::CloseAllFDs({0, 1, 2});
 #endif /* I2_DEBUG */
-			}
-		}
 	}
 #endif /* _WIN32 */
 

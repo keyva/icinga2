@@ -8,59 +8,51 @@
 #include "base/shared-object.hpp"
 #include "base/value.hpp"
 #include "base/debuginfo.hpp"
+#include <atomic>
 #include <map>
 #include <vector>
 #include <memory>
+#include <shared_mutex>
 
 namespace icinga
 {
 
-struct NamespaceValue : public SharedObject
+struct NamespaceValue
 {
-	DECLARE_PTR_TYPEDEFS(NamespaceValue);
-
-	virtual Value Get(const DebugInfo& debugInfo = DebugInfo()) const = 0;
-	virtual void Set(const Value& value, bool overrideFrozen, const DebugInfo& debugInfo = DebugInfo()) = 0;
+	Value Val;
+	bool Const;
 };
 
-struct EmbeddedNamespaceValue : public NamespaceValue
-{
-	EmbeddedNamespaceValue(const Value& value);
-
-	Value Get(const DebugInfo& debugInfo) const override;
-	void Set(const Value& value, bool overrideFrozen, const DebugInfo& debugInfo) override;
-
-private:
-	Value m_Value;
-};
-
-struct ConstEmbeddedNamespaceValue : public EmbeddedNamespaceValue
-{
-	using EmbeddedNamespaceValue::EmbeddedNamespaceValue;
-
-	void Set(const Value& value, bool overrideFrozen, const DebugInfo& debugInfo) override;
-};
-
-class Namespace;
-
-struct NamespaceBehavior
-{
-	virtual void Register(const boost::intrusive_ptr<Namespace>& ns, const String& field, const Value& value, bool overrideFrozen, const DebugInfo& debugInfo) const;
-	virtual void Remove(const boost::intrusive_ptr<Namespace>& ns, const String& field, bool overrideFrozen);
-};
-
-struct ConstNamespaceBehavior : public NamespaceBehavior
-{
-	void Register(const boost::intrusive_ptr<Namespace>& ns, const String& field, const Value& value, bool overrideFrozen, const DebugInfo& debugInfo) const override;
-	void Remove(const boost::intrusive_ptr<Namespace>& ns, const String& field, bool overrideFrozen) override;
-	void Freeze();
-
-private:
-	bool m_Frozen;
-};
 
 /**
  * A namespace.
+ *
+ * ## External Locking
+ *
+ * Synchronization is handled internally, so almost all functions are safe for concurrent use without external locking.
+ * The only exception to this are functions returning an iterator. To use these, the caller has to acquire an ObjectLock
+ * on the namespace. The iterators only remain valid for as long as that ObjectLock is held. Note that this also
+ * includes range-based for loops.
+ *
+ * If consistency across multiple operations is required, an ObjectLock must also be acquired to prevent concurrent
+ * modifications.
+ *
+ * ## Internal Locking
+ *
+ * Two mutex objects are involved in locking a namespace: the recursive mutex inherited from the Object class that is
+ * acquired and released using the ObjectLock class and the m_DataMutex shared mutex contained directly in the
+ * Namespace class. The ObjectLock is used to synchronize multiple write operations against each other. The shared mutex
+ * is only used to ensure the consistency of the m_Data data structure.
+ *
+ * Read operations must acquire a shared lock on m_DataMutex. This prevents concurrent writes to that data structure
+ * but still allows concurrent reads.
+ *
+ * Write operations must first obtain an ObjectLock and then a shared lock on m_DataMutex. This order is important for
+ * preventing deadlocks. The ObjectLock prevents concurrent write operations while the shared lock prevents concurrent
+ * read operations.
+ *
+ * External read access to iterators is synchronized by the caller holding an ObjectLock. This ensures no concurrent
+ * write operations as these require the ObjectLock but still allows concurrent reads as m_DataMutex is not locked.
  *
  * @ingroup base
  */
@@ -69,24 +61,23 @@ class Namespace final : public Object
 public:
 	DECLARE_OBJECT(Namespace);
 
-	typedef std::map<String, NamespaceValue::Ptr>::iterator Iterator;
+	typedef std::map<String, NamespaceValue>::iterator Iterator;
 
-	typedef std::map<String, NamespaceValue::Ptr>::value_type Pair;
+	typedef std::map<String, NamespaceValue>::value_type Pair;
 
-	Namespace(NamespaceBehavior *behavior = new NamespaceBehavior);
+	explicit Namespace(bool constValues = false);
 
 	Value Get(const String& field) const;
 	bool Get(const String& field, Value *value) const;
-	void Set(const String& field, const Value& value, bool overrideFrozen = false);
+	void Set(const String& field, const Value& value, bool isConst = false, const DebugInfo& debugInfo = DebugInfo());
 	bool Contains(const String& field) const;
-	void Remove(const String& field, bool overrideFrozen = false);
-
-	NamespaceValue::Ptr GetAttribute(const String& field) const;
-	void SetAttribute(const String& field, const NamespaceValue::Ptr& nsVal);
-	void RemoveAttribute(const String& field);
+	void Remove(const String& field);
+	void Freeze();
 
 	Iterator Begin();
 	Iterator End();
+
+	size_t GetLength() const;
 
 	Value GetFieldByName(const String& field, bool sandboxed, const DebugInfo& debugInfo) const override;
 	void SetFieldByName(const String& field, const Value& value, bool overrideFrozen, const DebugInfo& debugInfo) override;
@@ -96,8 +87,12 @@ public:
 	static Object::Ptr GetPrototype();
 
 private:
-	std::map<String, NamespaceValue::Ptr> m_Data;
-	std::unique_ptr<NamespaceBehavior> m_Behavior;
+	std::shared_lock<std::shared_timed_mutex> ReadLockUnlessFrozen() const;
+
+	std::map<String, NamespaceValue> m_Data;
+	mutable std::shared_timed_mutex m_DataMutex;
+	bool m_ConstValues;
+	std::atomic<bool> m_Frozen;
 };
 
 Namespace::Iterator begin(const Namespace::Ptr& x);

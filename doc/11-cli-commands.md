@@ -38,6 +38,7 @@ Supported commands:
   * pki save-cert (saves another Icinga 2 instance's certificate)
   * pki sign-csr (signs a CSR)
   * pki ticket (generates a ticket)
+  * pki verify (verify TLS certificates: CN, signed by CA, is CA; Print certificate)
   * variable get (gets a variable)
   * variable list (lists all variables)
 
@@ -74,28 +75,28 @@ You need to install the `bash-completion` package if not already installed.
 
 RHEL/CentOS/Fedora:
 
-```
-# yum install bash-completion
+```bash
+yum install bash-completion
 ```
 
 SUSE:
 
-```
-# zypper install bash-completion
+```bash
+zypper install bash-completion
 ```
 
 Debian/Ubuntu:
 
-```
-# apt-get install bash-completion
+```bash
+apt-get install bash-completion
 ```
 
 Ensure that the `bash-completion.d` directory is added to your shell
 environment. You can manually source the icinga2 bash-completion file
 into your current session and test it:
 
-```
-# source /etc/bash-completion.d/icinga2
+```bash
+source /etc/bash-completion.d/icinga2
 ```
 
 
@@ -304,8 +305,8 @@ On operating systems without the `libedit` library installed there is no
 support for line-editing or a command history. However you can
 use the `rlwrap` program if you require those features:
 
-```
-$ rlwrap icinga2 console
+```bash
+rlwrap icinga2 console
 ```
 
 The debug console can be used to connect to a running Icinga 2 instance using
@@ -429,6 +430,7 @@ Command options:
   -c [ --config ] arg       parse a configuration file
   -z [ --no-config ]        start without a configuration file
   -C [ --validate ]         exit after validating the configuration
+  --dump-objects            write icinga2.debug cache file for icinga2 object list
   -e [ --errorlog ] arg     log fatal errors to the specified log file (only
                             works in combination with --daemonize or
                             --close-stdio)
@@ -519,10 +521,9 @@ attributes. The command also shows where each of the attributes was modified and
 provides debug information for further configuration problem analysis.
 That way you can also identify which objects have been created from your [apply rules](17-language-reference.md#apply).
 
-Runtime modifications via the [REST API](12-icinga2-api.md#icinga2-api-config-objects)
-are not immediately updated. Furthermore there is a known issue with
+Configuration modifications are not immediately updated. Furthermore there is a known issue with
 [group assign expressions](17-language-reference.md#group-assign) which are not reflected in the host object output.
-You need to restart Icinga 2 in order to update the `icinga2.debug` cache file.
+You need to run `icinga2 daemon -C --dump-objects` in order to update the `icinga2.debug` cache file.
 
 More information can be found in the [troubleshooting](15-troubleshooting.md#troubleshooting-list-configuration-objects) section.
 
@@ -570,7 +571,7 @@ You will need them in the [distributed monitoring chapter](06-distributed-monito
 
 ```
 # icinga2 pki --help
-icinga2 - The Icinga 2 network monitoring daemon (version: v2.11.0)
+icinga2 - The Icinga 2 network monitoring daemon (version: v2.12.0)
 
 Usage:
   icinga2 <command> [<arguments>]
@@ -582,6 +583,7 @@ Supported commands:
   * pki save-cert (saves another Icinga 2 instance's certificate)
   * pki sign-csr (signs a CSR)
   * pki ticket (generates a ticket)
+  * pki verify (verify TLS certificates: CN, signed by CA, is CA; Print certificate)
 
 Global options:
   -h [ --help ]             show this help message
@@ -723,8 +725,8 @@ Every time you have changed your configuration you should first tell Icinga 2
 to [validate](11-cli-commands.md#config-validation). If there are no validation errors, you can
 safely reload the Icinga 2 daemon.
 
-```
-# systemctl reload icinga2
+```bash
+systemctl reload icinga2
 ```
 
 The `reload` action will send the `SIGHUP` signal to the Icinga 2 daemon

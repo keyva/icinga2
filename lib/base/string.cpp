@@ -127,6 +127,18 @@ String::operator const std::string&() const
 	return m_Data;
 }
 
+/**
+ * Conversion function to boost::beast::string_view.
+ *
+ * This allows using String as the value for HTTP headers in boost::beast::http::basic_fields::set.
+ *
+ * @return A boost::beast::string_view representing this string.
+ */
+String::operator boost::beast::string_view() const
+{
+	return boost::beast::string_view(m_Data);
+}
+
 const char *String::CStr() const
 {
 	return m_Data.c_str();
@@ -448,4 +460,9 @@ String::Iterator icinga::range_end(String& x)
 String::ConstIterator icinga::range_end(const String& x)
 {
 	return x.End();
+}
+
+std::size_t std::hash<String>::operator()(const String& s) const noexcept
+{
+	return std::hash<std::string>{}(s.GetData());
 }

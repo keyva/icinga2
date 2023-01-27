@@ -269,7 +269,7 @@ std::pair<Dictionary::Ptr, Array::Ptr> CIB::GetFeatureStats()
 		ObjectLock olock(statsFunctions);
 
 		for (const Namespace::Pair& kv : statsFunctions)
-			static_cast<Function::Ptr>(kv.second->Get())->Invoke({ status, perfdata });
+			static_cast<Function::Ptr>(kv.second.Val)->Invoke({ status, perfdata });
 	}
 
 	return std::make_pair(status, perfdata);
@@ -329,7 +329,7 @@ void CIB::StatsFunc(const Dictionary::Ptr& status, const Array::Ptr& perfdata) {
 	status->Set("num_services_handled", ss.services_handled);
 	status->Set("num_services_problem", ss.services_problem);
 
-	double uptime = Utility::GetTime() - Application::GetStartTime();
+	double uptime = Application::GetUptime();
 	status->Set("uptime", uptime);
 
 	HostStatistics hs = CalculateHostStats();

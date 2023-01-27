@@ -54,7 +54,7 @@ Install tools which help you to do so. Opinions differ, let us know if you have 
 [htop](https://hisham.hm/htop/) is a better replacement for `top` and helps to analyze processes
 interactively.
 
-```
+```bash
 yum install htop
 apt-get install htop
 ```
@@ -68,32 +68,33 @@ Attach it when posting a question to the community channels.
 The [sysstat](https://github.com/sysstat/sysstat) package provides a number of tools to
 analyze the performance on Linux. On FreeBSD you could use `systat` for example.
 
-```
+```bash
 yum install sysstat
 apt-get install sysstat
 ```
 
 Example for `vmstat` (summary of memory, processes, etc.):
 
-```
-// summary
+```bash
+# summary
 vmstat -s
-// print timestamps, format in MB, stats every 1 second, 5 times
+# print timestamps, format in MB, stats every 1 second, 5 times
 vmstat -t -S M 1 5
 ```
 
 Example for `iostat`:
 
-```
+```bash
 watch -n 1 iostat
 ```
 
 Example for `sar`:
-```
-sar //cpu
-sar -r //ram
-sar -q //load avg
-sar -b //I/O
+
+```bash
+sar # cpu
+sar -r # ram
+sar -q # load avg
+sar -b # I/O
 ```
 
 `sysstat` also provides the `iostat` binary. On FreeBSD you could use `systat` for example.
@@ -124,16 +125,16 @@ Get-Content .\icinga2.log -tail 10 -wait
 
 Enable the `debuglog` feature:
 
-```
-# icinga2 feature enable debuglog
-# service icinga2 restart
+```bash
+icinga2 feature enable debuglog
+service icinga2 restart
 ```
 
 The debug log file can be found in `/var/log/icinga2/debug.log`.
 
 You can tail the log files with an administrative shell:
 
-```
+```bash
 cd /var/log/icinga2
 tail -f debug.log
 ```
@@ -141,8 +142,8 @@ tail -f debug.log
 Alternatively you may run Icinga 2 in the foreground with debugging enabled. Specify the console
 log severity as an additional parameter argument to `-x`.
 
-```
-# /usr/sbin/icinga2 daemon -x notice
+```bash
+/usr/sbin/icinga2 daemon -x notice
 ```
 
 The [log severity](09-object-types.md#objecttype-filelogger) can be one of `critical`, `warning`, `information`, `notice`
@@ -173,6 +174,60 @@ You can tail the log files with an administrative Powershell:
 C:\> cd C:\ProgramData\icinga2\var\log\icinga2
 
 C:\ProgramData\icinga2\var\log\icinga2> Get-Content .\debug.log -tail 10 -wait
+```
+
+## Icinga starts/restarts/reloads very slowly
+
+Icinga performs a lot of memory allocations, especially during startup.
+Swapping out the allocator may increase the startup performance.
+The following instructions assume you run Linux and systemd.
+
+On RHEL or derivates add the EPEL repository first (if not already done).
+Let your package manager search for package names containing "jemalloc".
+Pick preferably one named "libjemalloc" followed by a number,
+just "jemalloc" otherwise, and install it.
+
+Run `ldconfig -p |grep libjemalloc`. It should print something similar to:
+
+```
+	libjemalloc.so.2 (libc6,x86-64) => /lib/x86_64-linux-gnu/libjemalloc.so.2
+```
+
+I.e. a relative file name followed by an absolute one. Remember the latter.
+
+Measure how long Icinga needs to load its config without and with libjemalloc:
+
+```bash
+time icinga2 daemon -C
+
+time env LD_PRELOAD=/lib/x86_64-linux-gnu/libjemalloc.so.2 icinga2 daemon -C
+```
+
+Replace `/lib/x86_64-linux-gnu/libjemalloc.so.2` with the absolute path
+you actually got from `ldconfig -p`!
+
+Please do us a favor and share your results
+[with us](https://community.icinga.com/t/icinga-reloads-config-slowly-try-jemalloc/11032).
+
+If it's faster with libjemalloc, do the following to persist the change.
+
+Run `systemctl edit icinga2.service`. This will open an editor.
+Add the following, save the file and close the editor.
+
+```
+[Service]
+Environment=LD_PRELOAD=/lib/x86_64-linux-gnu/libjemalloc.so.2
+```
+
+Replace `/lib/x86_64-linux-gnu/libjemalloc.so.2` with the absolute path
+you actually got from `ldconfig -p`!
+
+Restart Icinga. Verify whether your changes took effect and enjoy the speed:
+
+```
+# lsof -p `cat /var/run/icinga2/icinga2.pid` |grep libjemalloc
+icinga2 7764 nagios  mem    REG                8,5   744776 2631636 /usr/lib/x86_64-linux-gnu/libjemalloc.so.2
+#
 ```
 
 ## Configuration Troubleshooting <a id="troubleshooting-configuration"></a>
@@ -255,10 +310,9 @@ Found 1 Service objects.
 [2014-10-15 14:27:19 +0200] information/cli: Parsed 175 objects.
 ```
 
-Runtime modifications via the [REST API](12-icinga2-api.md#icinga2-api-config-objects)
-are not immediately updated. Furthermore there is a known issue with
+Configuration modifications are not immediately updated. Furthermore there is a known issue with
 [group assign expressions](17-language-reference.md#group-assign) which are not reflected in the host object output.
-You need to restart Icinga 2 in order to update the `icinga2.debug` cache file.
+You need to `icinga2 daemon -C --dump-objects` in order to update the `icinga2.debug` cache file.
 
 ### Apply rules do not match <a id="apply-rules-do-not-match"></a>
 
@@ -290,8 +344,8 @@ encapsulated by `/* ... */`).
 Run the [configuration validation](11-cli-commands.md#config-validation) and add `notice` as log severity.
 Search for the file which should be included i.e. using the `grep` CLI command.
 
-```
-# icinga2 daemon -C -x notice | grep command
+```bash
+icinga2 daemon -C -x notice | grep command
 ```
 
 ### Configuration attributes are inherited from <a id="configuration-attribute-inheritance"></a>
@@ -382,10 +436,10 @@ $ ICINGA2_API_PASSWORD=icinga icinga2 console --connect 'https://root@localhost:
 
 Example for searching the debug log:
 
-```
-# icinga2 feature enable debuglog
-# systemctl restart icinga2
-# tail -f /var/log/icinga2/debug.log | grep "notice/Process"
+```bash
+icinga2 feature enable debuglog
+systemctl restart icinga2
+tail -f /var/log/icinga2/debug.log | grep "notice/Process"
 ```
 
 
@@ -404,8 +458,8 @@ and verify why the checks are not executed there.
 
 Test a plugin as icinga user.
 
-```
-# sudo -u icinga /usr/lib/nagios/plugins/check_ping -4 -H 127.0.0.1 -c 5000,100% -w 3000,80%
+```bash
+sudo -u icinga /usr/lib/nagios/plugins/check_ping -4 -H 127.0.0.1 -c 5000,100% -w 3000,80%
 ```
 
 > **Note**
@@ -425,8 +479,8 @@ The feature 'checker' is already enabled.
 
 Fetch all check result events matching the `event.service` name `random`:
 
-```
-$ curl -k -s -u root:icinga -H 'Accept: application/json' -X POST \
+```bash
+curl -k -s -u root:icinga -H 'Accept: application/json' -X POST \
  'https://localhost:5665/v1/events?queue=debugchecks&types=CheckResult&filter=match%28%22random*%22,event.service%29'
 ```
 
@@ -579,7 +633,7 @@ The error message could look like this:
 In order to solve the problem, increase the value for `DefaultTasksMax`
 or set it to `infinity`.
 
-```
+```bash
 mkdir /etc/systemd/system/icinga2.service.d
 cat >/etc/systemd/system/icinga2.service.d/limits.conf <<EOF
 [Service]
@@ -639,8 +693,8 @@ a dashboard overview for `overdue checks`.
 The REST API provides the [status](12-icinga2-api.md#icinga2-api-status) URL endpoint with some generic metrics
 on Icinga and its features.
 
-```
-# curl -k -s -u root:icinga 'https://localhost:5665/v1/status?pretty=1' | less
+```bash
+curl -k -s -u root:icinga 'https://localhost:5665/v1/status?pretty=1' | less
 ```
 
 You can also calculate late check results via the REST API:
@@ -755,17 +809,17 @@ Examples:
 The feature 'notification' is already enabled.
 ```
 
-```
-# icinga2 feature enable debuglog
-# systemctl restart icinga2
+```bash
+icinga2 feature enable debuglog
+systemctl restart icinga2
 
-# grep Notification /var/log/icinga2/debug.log > /root/analyze_notification_problem.log
+grep Notification /var/log/icinga2/debug.log > /root/analyze_notification_problem.log
 ```
 
 You can use the Icinga 2 API [event streams](12-icinga2-api.md#icinga2-api-event-streams) to receive live notification streams:
 
-```
-$ curl -k -s -u root:icinga -H 'Accept: application/json' -X POST 'https://localhost:5665/v1/events?queue=debugnotifications&types=Notification'
+```bash
+curl -k -s -u root:icinga -H 'Accept: application/json' -X POST 'https://localhost:5665/v1/events?queue=debugnotifications&types=Notification'
 ```
 
 
@@ -855,7 +909,7 @@ $ ICINGA2_API_PASSWORD=icinga icinga2 console --connect 'https://root@localhost:
 "icinga2-agent1.localdomain"
 ```
 
-Whenever a notification command failed to execute, you can fetch the output as well. 
+Whenever a notification command failed to execute, you can fetch the output as well.
 
 
 ## Feature Troubleshooting <a id="troubleshooting-features"></a>
@@ -869,19 +923,19 @@ to `features-enabled` and that the latter is included in [icinga2.conf](04-confi
 
 Look up the [object type](09-object-types.md#object-types) for the required feature and verify it is enabled:
 
-```
-# icinga2 object list --type <feature object type>
+```bash
+icinga2 object list --type <feature object type>
 ```
 
 Example for the `graphite` feature:
 
-```
-# icinga2 object list --type GraphiteWriter
+```bash
+icinga2 object list --type GraphiteWriter
 ```
 
 Look into the log and check whether the feature logs anything specific for this matter.
 
-```
+```bash
 grep GraphiteWriter /var/log/icinga2/icinga2.log
 ```
 
@@ -958,7 +1012,7 @@ again, carefully do the following steps with creating a backup before:
 
 Navigate into the API package prefix.
 
-```
+```bash
 cd /var/lib/icinga2/api/packages
 ```
 
@@ -983,20 +1037,20 @@ If you have more than one stage directory here, pick the latest modified
 directory. Copy the directory name `abcd-ef12-3456-7890` and
 add it into a new file `active-stage`. This can be done like this:
 
-```
+```bash
 echo "dbe0bef8-c72c-4cc9-9779-da7c4527c5b2" > active-stage
 ```
 
 `active.conf` needs to have the correct active stage too, add it again
 like this. Note: This is deep down in the code, use with care!
 
-```
+```bash
 sed -i 's/ActiveStages\["_api"\] = .*/ActiveStages\["_api"\] = "dbe0bef8-c72c-4cc9-9779-da7c4527c5b2"/g' /var/lib/icinga2/api/packages/_api/active.conf
 ```
 
 Restart Icinga 2.
 
-```
+```bash
 systemctl restart icinga2
 ```
 
@@ -1032,93 +1086,178 @@ Print the CA and client certificate and ensure that the following attributes are
 * v3 extensions must set the basic constraint for `CA:TRUE` (ca.crt) or `CA:FALSE` (client certificate).
 * Subject Alternative Name is set to the resolvable DNS name (required for REST API and browsers).
 
-
 Navigate into the local certificate store:
 
-```
-$ cd /var/lib/icinga2/certs/
-```
-
-Print the CA certificate:
-
-```
-$ openssl x509 -in ca.crt -text
-
-Certificate:
-    Data:
-        Version: 3 (0x2)
-        Serial Number: 1 (0x1)
-    Signature Algorithm: sha256WithRSAEncryption
-        Issuer: CN=Icinga CA
-        Validity
-            Not Before: Feb 23 14:45:32 2016 GMT
-            Not After : Feb 19 14:45:32 2031 GMT
-        Subject: CN=Icinga CA
-        Subject Public Key Info:
-            Public Key Algorithm: rsaEncryption
-                Public-Key: (4096 bit)
-                Modulus:
-...
-                Exponent: 65537 (0x10001)
-        X509v3 extensions:
-            X509v3 Basic Constraints: critical
-                CA:TRUE
-    Signature Algorithm: sha256WithRSAEncryption
-...
+```bash
+cd /var/lib/icinga2/certs/
 ```
 
-Print the client public certificate:
+Make sure to verify the agents' certificate and its stored `ca.crt` in `/var/lib/icinga2/certs` and ensure that
+all instances (master, satellite, agent) are signed by the **same CA**.
+
+Compare the `ca.crt` file from the agent node and compare it to your master's `ca.crt` file.
+
+
+Since 2.12, you can use the built-in CLI command `pki verify` to perform TLS certificate validation tasks.
+
+> **Hint**
+>
+> The CLI command uses exit codes aligned to the [Plugin API specification](05-service-monitoring.md#service-monitoring-plugin-api).
+> Run the commands followed with `echo $?` to see the exit code.
+
+These CLI commands can be used on Windows agents too without requiring the OpenSSL binary.
+
+#### Print TLS Certificate <a id="troubleshooting-certificate-verification-print"></a>
+
+Pass the certificate file to the `--cert` CLI command parameter to print its details.
+This prints a shorter version of `openssl x509 -in <file> -text`.
 
 ```
-$ openssl x509 -in icinga2-agent1.localdomain.crt -text
+$ icinga2 pki verify --cert icinga2-agent2.localdomain.crt
 
-Certificate:
-    Data:
-        Version: 3 (0x2)
-        Serial Number:
-            86:47:44:65:49:c6:65:6b:5e:6d:4f:a5:fe:6c:76:05:0b:1a:cf:34
-    Signature Algorithm: sha256WithRSAEncryption
-        Issuer: CN=Icinga CA
-        Validity
-            Not Before: Aug 20 16:20:05 2016 GMT
-            Not After : Aug 17 16:20:05 2031 GMT
-        Subject: CN=icinga2-agent1.localdomain
-        Subject Public Key Info:
-            Public Key Algorithm: rsaEncryption
-                Public-Key: (4096 bit)
-                Modulus:
-...
-                Exponent: 65537 (0x10001)
-        X509v3 extensions:
-            X509v3 Basic Constraints: critical
-                CA:FALSE
-            X509v3 Subject Alternative Name:
-                DNS:icinga2-agent1.localdomain
-    Signature Algorithm: sha256WithRSAEncryption
-...
+information/cli: Printing certificate 'icinga2-agent2.localdomain.crt'
+
+ Version:             3
+ Subject:             CN = icinga2-agent2.localdomain
+ Issuer:              CN = Icinga CA
+ Valid From:          Feb 14 11:29:36 2020 GMT
+ Valid Until:         Feb 10 11:29:36 2035 GMT
+ Serial:              12:fe:a6:22:f5:e3:db:a2:95:8e:92:b2:af:1a:e3:01:44:c4:70:e0
+
+ Signature Algorithm: sha256WithRSAEncryption
+ Subject Alt Names:   icinga2-agent2.localdomain
+ Fingerprint:         40 98 A0 77 58 4F CA D1 05 AC 18 53 D7 52 8D D7 9C 7F 5A 23 B4 AF 63 A4 92 9D DC FF 89 EF F1 4C
 ```
 
-Make sure to verify the client's certificate and its received `ca.crt` in `/var/lib/icinga2/certs` and ensure that
-both instances are signed by the **same CA**.
+You can also print the `ca.crt` certificate without any further checks using the `--cert` parameter.
+
+#### Print and Verify CA Certificate <a id="troubleshooting-certificate-verification-print-verify-ca"></a>
+
+The `--cacert` CLI parameter allows to check whether the given certificate file is a public CA certificate.
 
 ```
-$ openssl verify -verbose -CAfile /var/lib/icinga2/certs/ca.crt /var/lib/icinga2/certs/icinga2-master1.localdomain.crt
+$ icinga2 pki verify --cacert ca.crt
 
-icinga2-master1.localdomain.crt: OK
+information/cli: Checking whether certificate 'ca.crt' is a valid CA certificate.
+
+ Version:             3
+ Subject:             CN = Icinga CA
+ Issuer:              CN = Icinga CA
+ Valid From:          Jul 31 12:26:08 2019 GMT
+ Valid Until:         Jul 27 12:26:08 2034 GMT
+ Serial:              89:fe:d6:12:66:25:3a:c5:07:c1:eb:d4:e6:f2:df:ca:13:6e:dc:e7
+
+ Signature Algorithm: sha256WithRSAEncryption
+ Subject Alt Names:
+ Fingerprint:         9A 11 29 A8 A3 89 F8 56 30 1A E4 0A B2 6B 28 46 07 F0 14 17 BD 19 A4 FC BD 41 40 B5 1A 8F BF 20
+
+information/cli: OK: CA certificate file 'ca.crt' was verified successfully.
 ```
 
-```
-$ openssl verify -verbose -CAfile /var/lib/icinga2/certs/ca.crt /var/lib/icinga2/certs/icinga2-agent1.localdomain.crt
-
-icinga2-agent1.localdomain.crt: OK
-```
-
-Fetch the `ca.crt` file from the client node and compare it to your master's `ca.crt` file:
+In case you pass a wrong certificate, an error is shown and the exit code is `2` (Critical).
 
 ```
-$ scp icinga2-agent1:/var/lib/icinga2/certs/ca.crt test-client-ca.crt
-$ diff -ur /var/lib/icinga2/certs/ca.crt test-client-ca.crt
+$ icinga2 pki verify --cacert icinga2-agent2.localdomain.crt
+
+information/cli: Checking whether certificate 'icinga2-agent2.localdomain.crt' is a valid CA certificate.
+
+ Version:             3
+ Subject:             CN = icinga2-agent2.localdomain
+ Issuer:              CN = Icinga CA
+ Valid From:          Feb 14 11:29:36 2020 GMT
+ Valid Until:         Feb 10 11:29:36 2035 GMT
+ Serial:              12:fe:a6:22:f5:e3:db:a2:95:8e:92:b2:af:1a:e3:01:44:c4:70:e0
+
+ Signature Algorithm: sha256WithRSAEncryption
+ Subject Alt Names:   icinga2-agent2.localdomain
+ Fingerprint:         40 98 A0 77 58 4F CA D1 05 AC 18 53 D7 52 8D D7 9C 7F 5A 23 B4 AF 63 A4 92 9D DC FF 89 EF F1 4C
+
+critical/cli: CRITICAL: The file 'icinga2-agent2.localdomain.crt' does not seem to be a CA certificate file.
 ```
+
+#### Verify Certificate is signed by CA Certificate <a id="troubleshooting-certificate-verification-signed-by-ca"></a>
+
+Pass the certificate file to the `--cert` CLI parameter, and the `ca.crt` file to the `--cacert` parameter.
+Common troubleshooting scenarios involve self-signed certificates and untrusted agents resulting in disconnects.
+
+```
+$ icinga2 pki verify --cert icinga2-agent2.localdomain.crt --cacert ca.crt
+
+information/cli: Verifying certificate 'icinga2-agent2.localdomain.crt'
+
+ Version:             3
+ Subject:             CN = icinga2-agent2.localdomain
+ Issuer:              CN = Icinga CA
+ Valid From:          Feb 14 11:29:36 2020 GMT
+ Valid Until:         Feb 10 11:29:36 2035 GMT
+ Serial:              12:fe:a6:22:f5:e3:db:a2:95:8e:92:b2:af:1a:e3:01:44:c4:70:e0
+
+ Signature Algorithm: sha256WithRSAEncryption
+ Subject Alt Names:   icinga2-agent2.localdomain
+ Fingerprint:         40 98 A0 77 58 4F CA D1 05 AC 18 53 D7 52 8D D7 9C 7F 5A 23 B4 AF 63 A4 92 9D DC FF 89 EF F1 4C
+
+information/cli:  with CA certificate 'ca.crt'.
+
+ Version:             3
+ Subject:             CN = Icinga CA
+ Issuer:              CN = Icinga CA
+ Valid From:          Jul 31 12:26:08 2019 GMT
+ Valid Until:         Jul 27 12:26:08 2034 GMT
+ Serial:              89:fe:d6:12:66:25:3a:c5:07:c1:eb:d4:e6:f2:df:ca:13:6e:dc:e7
+
+ Signature Algorithm: sha256WithRSAEncryption
+ Subject Alt Names:
+ Fingerprint:         9A 11 29 A8 A3 89 F8 56 30 1A E4 0A B2 6B 28 46 07 F0 14 17 BD 19 A4 FC BD 41 40 B5 1A 8F BF 20
+
+information/cli: OK: Certificate with CN 'icinga2-agent2.localdomain' is signed by CA.
+```
+
+#### Verify Certificate matches Common Name (CN) <a id="troubleshooting-certificate-verification-common-name-match"></a>
+
+This allows to verify the common name inside the certificate with a given string parameter.
+Typical troubleshooting involve upper/lower case CNs (Windows).
+
+```
+$ icinga2 pki verify --cert icinga2-agent2.localdomain.crt --cn icinga2-agent2.localdomain
+
+information/cli: Verifying common name (CN) 'icinga2-agent2.localdomain in certificate 'icinga2-agent2.localdomain.crt'.
+
+ Version:             3
+ Subject:             CN = icinga2-agent2.localdomain
+ Issuer:              CN = Icinga CA
+ Valid From:          Feb 14 11:29:36 2020 GMT
+ Valid Until:         Feb 10 11:29:36 2035 GMT
+ Serial:              12:fe:a6:22:f5:e3:db:a2:95:8e:92:b2:af:1a:e3:01:44:c4:70:e0
+
+ Signature Algorithm: sha256WithRSAEncryption
+ Subject Alt Names:   icinga2-agent2.localdomain
+ Fingerprint:         40 98 A0 77 58 4F CA D1 05 AC 18 53 D7 52 8D D7 9C 7F 5A 23 B4 AF 63 A4 92 9D DC FF 89 EF F1 4C
+
+information/cli: OK: CN 'icinga2-agent2.localdomain' matches certificate CN 'icinga2-agent2.localdomain'.
+```
+
+In the example below, the certificate uses an upper case CN.
+
+```
+$ icinga2 pki verify --cert icinga2-agent2.localdomain.crt --cn icinga2-agent2.localdomain
+
+information/cli: Verifying common name (CN) 'icinga2-agent2.localdomain in certificate 'icinga2-agent2.localdomain.crt'.
+
+ Version:             3
+ Subject:             CN = ICINGA2-agent2.localdomain
+ Issuer:              CN = Icinga CA
+ Valid From:          Feb 14 11:29:36 2020 GMT
+ Valid Until:         Feb 10 11:29:36 2035 GMT
+ Serial:              12:fe:a6:22:f5:e3:db:a2:95:8e:92:b2:af:1a:e3:01:44:c4:70:e0
+
+ Signature Algorithm: sha256WithRSAEncryption
+ Subject Alt Names:   ICINGA2-agent2.localdomain
+ Fingerprint:         40 98 A0 77 58 4F CA D1 05 AC 18 53 D7 52 8D D7 9C 7F 5A 23 B4 AF 63 A4 92 9D DC FF 89 EF F1 4C
+
+critical/cli: CRITICAL: CN 'icinga2-agent2.localdomain' does NOT match certificate CN 'icinga2-agent2.localdomain'.
+```
+
+
 
 ### Certificate Signing <a id="troubleshooting-certificate-signing"></a>
 
@@ -1189,13 +1328,13 @@ SSL-Session:
 
 You can specifically use one cipher or a list with the `-cipher` parameter:
 
-```
+```bash
 openssl s_client -connect 192.168.33.5:5665 -cipher 'ECDHE-RSA-AES256-GCM-SHA384'
 ```
 
 In order to fully simulate a connecting client, provide the certificates too:
 
-```
+```bash
 CERTPATH='/var/lib/icinga2/certs'
 HOSTNAME='icinga2.vagrant.demo.icinga.com'
 openssl s_client -connect 192.168.33.5:5665 -cert "${CERTPATH}/${HOSTNAME}.crt" -key "${CERTPATH}/${HOSTNAME}.key" -CAfile "${CERTPATH}/ca.crt" -cipher 'ECDHE-RSA-AES256-GCM-SHA384'
@@ -1216,8 +1355,8 @@ the child node actively connectsm, you can still simulate a TLS handshake.
 Use `openssl s_server` instead of `openssl s_client` on the master during the connection
 attempt.
 
-```
-$ openssl s_server -connect 192.168.56.101:5665
+```bash
+openssl s_server -connect 192.168.56.101:5665
 ```
 
 Since the server role chooses the preferred cipher suite in Icinga,
@@ -1300,12 +1439,12 @@ General connection errors could be one of the following problems:
 Use tools like `netstat`, `tcpdump`, `nmap`, etc. to make sure that the cluster communication
 works (default port is `5665`).
 
-```
-# tcpdump -n port 5665 -i any
+```bash
+tcpdump -n port 5665 -i any
 
-# netstat -tulpen | grep icinga
+netstat -tulpen | grep icinga
 
-# nmap icinga2-agent1.localdomain
+nmap icinga2-agent1.localdomain
 ```
 
 ### Cluster Troubleshooting TLS Errors <a id="troubleshooting-cluster-tls-errors"></a>
@@ -1388,8 +1527,8 @@ Additional tasks:
 
 Fetch all check result events matching the `event.service` name `remote-client`:
 
-```
-$ curl -k -s -u root:icinga -H 'Accept: application/json' -X POST 'https://localhost:5665/v1/events?queue=debugcommandendpoint&types=CheckResult&filter=match%28%22remote-client*%22,event.service%29'
+```bash
+curl -k -s -u root:icinga -H 'Accept: application/json' -X POST 'https://localhost:5665/v1/events?queue=debugcommandendpoint&types=CheckResult&filter=match%28%22remote-client*%22,event.service%29'
 ```
 
 
@@ -1423,19 +1562,19 @@ object Zone "master" {
 
 Then create a new directory in `zones.d` called `master`, if not existing.
 
-```
+```bash
 mkdir -p /etc/icinga2/zones.d/master
 ```
 
 Now move the directory tree from `conf.d` into the `master` zone.
 
-```
+```bash
 mv conf.d/* /etc/icinga2/zones.d/master/
 ```
 
 Validate the configuration and reload Icinga.
 
-```
+```bash
 icinga2 daemon -C
 systemctl restart icinga2
 ```
@@ -1542,53 +1681,26 @@ In order to solve this problem, remove the mentioned files from `zones.d` and us
 of syncing plugin binaries to your satellites and agents.
 
 
-#### Zones in Zones doesn't work <a id="troubleshooting-cluster-config-zones-in-zones"></a>
+#### Zones in Zones <a id="troubleshooting-cluster-config-zones-in-zones"></a>
 
-The cluster config sync works in the way that configuration
-put into `/etc/icinga2/zones.d` only is included when configured
-outside in `/etc/icinga2/zones.conf`.
+The cluster config sync works in a such manner that any `/etc/icinga2/zones.d/` subdirectory is included only when it is
+named after a known zone by the local `Endpoint`.
 
-If you for example create a "Zone Inception" with defining the
-`satellite` zone in `zones.d/master`, the config compiler does not
-re-run and include this zone config recursively from `zones.d/satellite`.
+If you for example add some configs in to `zones.d/satellite` and forgot to define the `satellite` zone
+in `zones.d/master` or outside in `/etc/icinga2/zones.conf`, the config compiler will not include
+this config from the `zones.d/satellite` zone directory.
 
 Since v2.11, the config compiler is only including directories where a
-zone has been configured. Otherwise it would include renamed old zones,
+zone has been configured. Otherwise, it would include renamed old zones,
 broken zones, etc. and those long-lasting bugs have been now fixed.
 
-A more concrete example: Masters and Satellites still need to know the Zone hierarchy outside of `zones.d` synced configuration.
+Here are some working examples:
 
-**Doesn't work**
+**Example: Everything in `zones.conf`**
 
-```
-vim /etc/icinga2/zones.conf
-
-object Zone "master" {
-  endpoints = [ "icinga2-master1.localdomain", "icinga2-master2.localdomain" ]
-}
-```
-
-```
-vim /etc/icinga2/zones.d/master/satellite-zones.conf
-
-object Zone "satellite" {
-  endpoints = [ "icinga2-satellite1.localdomain", "icinga2-satellite1.localdomain" ]
-}
-```
-
-```
-vim /etc/icinga2/zones.d/satellite/satellite-hosts.conf
-
-object Host "agent" { ... }
-```
-
-The `agent` host object will never reach the satellite, since the master does not have
-the `satellite` zone configured outside of zones.d.
-
-
-**Works**
-
-Each instance needs to know this, and know about the endpoints first:
+Each instance needs to know the `Zone` and `Endpoint` definitions for itself and all directly connected instances in order
+to successfully establish a connection with each other. This can be achieved by placing all `Endpoint` and `Zone` definitions
+of all Icinga 2 instances known by the local endpoint in this single file.
 
 ```
 vim /etc/icinga2/zones.conf
@@ -1596,22 +1708,39 @@ vim /etc/icinga2/zones.conf
 object Endpoint "icinga2-master1.localdomain" { ... }
 object Endpoint "icinga2-master2.localdomain" { ... }
 
-object Endpoint "icinga2-satellite1.localdomain" { ... }
-object Endpoint "icinga2-satellite2.localdomain" { ... }
-```
-
-Then the zone hierarchy as trust and also config sync inclusion is required.
-
-```
-vim /etc/icinga2/zones.conf
-
 object Zone "master" {
   endpoints = [ "icinga2-master1.localdomain", "icinga2-master2.localdomain" ]
 }
 
+object Endpoint "icinga2-satellite1.localdomain" { ... }
+object Endpoint "icinga2-satellite2.localdomain" { ... }
+
 object Zone "satellite" {
   endpoints = [ "icinga2-satellite1.localdomain", "icinga2-satellite1.localdomain" ]
+  parent = "master"
 }
+```
+
+**Example: Child zones in `zones.d/`**
+
+An additional option that Icinga 2 offers is the possibility to outsource all *child* `Endpoint` definitions of the
+local Icinga 2 instance to the `zones.d/` directory. As an example, we can place the satellite `Zone` and `Endpoint` definition
+from the above example into `zones.d/` underneath a directory named exactly like the local endpoint `Zone` name, which
+in our case is `master`.
+
+```
+mkdir /etc/icinga2/zones.d/master
+vim /etc/icinga2/zones.d/master/satellite.conf
+
+object Endpoint "icinga2-satellite1.localdomain" { ... }
+object Endpoint "icinga2-satellite2.localdomain" { ... }
+
+object Zone "satellite" {
+  endpoints = [ "icinga2-satellite1.localdomain", "icinga2-satellite1.localdomain" ]
+  parent = "master"
+}
+
+...
 ```
 
 Once done, you can start deploying actual monitoring objects into the satellite zone.
@@ -1622,10 +1751,12 @@ vim /etc/icinga2/zones.d/satellite/satellite-hosts.conf
 object Host "agent" { ... }
 ```
 
-That's also explained and described in the [documentation](06-distributed-monitoring.md#distributed-monitoring-scenarios-master-satellite-agents).
+Keep in mind that the `agent` host object will never reach the satellite, when the master does not have the
+`satellite` zone configured either in `zones.d/master` nor outside the `zones.d` directory. That's also explained and
+described in the [documentation](06-distributed-monitoring.md#distributed-monitoring-scenarios-master-satellite-agents).
 
 The thing you can do: For `command_endpoint` agents like inside the Director:
-Host -> Agent -> yes, there is no config sync for this zone in place. Therefore
+Host -> Agent -> yes, there is no config sync for this zone in place. Therefore,
 it is valid to just sync their zones via the config sync.
 
 #### Director Changes
@@ -1659,7 +1790,7 @@ object Endpoint "icinga-satellite2.localdomain" {
 // That's no different to what is explained in the docs as basic zone trust hierarchy, and is intentionally managed outside in zones.conf there.
 
 object Zone "master" {
-  endpoints = [ "icinga-master1.localdomain", "icinga-master2.localdomain" ] 
+  endpoints = [ "icinga-master1.localdomain", "icinga-master2.localdomain" ]
 }
 
 object Zone "satellite" {
@@ -1668,21 +1799,21 @@ object Zone "satellite" {
 }
 ```
 
-Prepare the above configuration on all affected nodes, satellites are likely uptodate already. 
+Prepare the above configuration on all affected nodes, satellites are likely uptodate already.
 Then continue with the steps below.
 
 > * backup your database, just to be on the safe side
 > * create all non-external Zone/Endpoint-Objects on all related Icinga Master/Satellite-Nodes (manually in your local zones.conf)
 > * while doing so please do NOT restart Icinga, no deployments
 > * change the type in the Director DB:
-> 
+>
 > ```sql
 > UPDATE icinga_zone SET object_type = 'external_object' WHERE object_type = 'object';
 > UPDATE icinga_endpoint SET object_type = 'external_object' WHERE object_type = 'object';
 > ```
-> 
+>
 > * render and deploy a new configuration in the Director. It will state that there are no changes. Ignore it, deploy anyways
-> 
+>
 > That's it. All nodes should automatically restart, triggered by the deployed configuration via cluster protocol.
 
 
@@ -1702,7 +1833,7 @@ certificate's CN, the master will deny all events.
 
 > **Tip**
 >
-> [Icinga Web 2](02-installation.md#setting-up-icingaweb2) provides a dashboard view
+> [Icinga Web 2](https://icinga.com/docs/icinga-web-2/latest/doc/01-About/) provides a dashboard view
 > for overdue check results.
 
 Enable the [debug log](15-troubleshooting.md#troubleshooting-enable-debug-output) on the master

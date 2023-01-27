@@ -44,17 +44,18 @@ public:
 
 	static void EvaluateApplyRules(const Host::Ptr& host);
 
+	void OnAllConfigLoaded() override;
+
 	static boost::signals2::signal<void (const Service::Ptr&, const CheckResult::Ptr&, const MessageOrigin::Ptr&)> OnHostProblemChanged;
 
 protected:
-	void OnAllConfigLoaded() override;
 	void CreateChildObjects(const Type::Ptr& childType) override;
 
 private:
 	Host::Ptr m_Host;
 
-	static bool EvaluateApplyRuleInstance(const Host::Ptr& host, const String& name, ScriptFrame& frame, const ApplyRule& rule);
-	static bool EvaluateApplyRule(const Host::Ptr& host, const ApplyRule& rule);
+	static bool EvaluateApplyRuleInstance(const Host::Ptr& host, const String& name, ScriptFrame& frame, const ApplyRule& rule, bool skipFilter);
+	static bool EvaluateApplyRule(const Host::Ptr& host, const ApplyRule& rule, bool skipFilter = false);
 };
 
 std::pair<Host::Ptr, Service::Ptr> GetHostService(const Checkable::Ptr& checkable);

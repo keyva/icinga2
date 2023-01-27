@@ -8,6 +8,7 @@
 #include "base/configtype.hpp"
 #include <boost/algorithm/string/case_conv.hpp>
 #include <set>
+#include <unordered_map>
 
 using namespace icinga;
 
@@ -189,6 +190,9 @@ bool ObjectQueryHandler::HandleRequest(
 		joinAttrs.insert(field.Name);
 	}
 
+	std::unordered_map<Type*, std::pair<bool, std::unique_ptr<Expression>>> typePermissions;
+	std::unordered_map<Object*, bool> objectAccessAllowed;
+
 	for (const ConfigObject::Ptr& obj : objs) {
 		DictionaryData result1{
 			{ "name", obj->GetName() },
@@ -256,6 +260,49 @@ bool ObjectQueryHandler::HandleRequest(
 
 			if (!joinedObj)
 				continue;
+
+			Type::Ptr reflectionType = joinedObj->GetReflectionType();
+			auto it = typePermissions.find(reflectionType.get());
+			bool granted;
+
+			if (it == typePermissions.end()) {
+				String permission = "objects/query/" + reflectionType->GetName();
+
+				std::unique_ptr<Expression> permissionFilter;
+				granted = FilterUtility::HasPermission(user, permission, &permissionFilter);
+
+				it = typePermissions.insert({reflectionType.get(), std::make_pair(granted, std::move(permissionFilter))}).first;
+			}
+
+			granted = it->second.first;
+			const std::unique_ptr<Expression>& permissionFilter = it->second.second;
+
+			if (!granted) {
+				// Not authorized
+				continue;
+			}
+
+			auto relation = objectAccessAllowed.find(joinedObj.get());
+			bool accessAllowed;
+
+			if (relation == objectAccessAllowed.end()) {
+				ScriptFrame permissionFrame(false, new Namespace());
+
+				try {
+					accessAllowed = FilterUtility::EvaluateFilter(permissionFrame, permissionFilter.get(), joinedObj);
+				} catch (const ScriptError& err) {
+					accessAllowed = false;
+				}
+
+				objectAccessAllowed.insert({joinedObj.get(), accessAllowed});
+			} else {
+				accessAllowed = relation->second;
+			}
+
+			if (!accessAllowed) {
+				// Access denied
+				continue;
+			}
 
 			String prefix = field.NavigationName;
 

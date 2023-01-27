@@ -21,6 +21,9 @@
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/spawn.hpp>
 #include <boost/asio/ssl/context.hpp>
+#include <boost/thread/shared_mutex.hpp>
+#include <cstdint>
+#include <mutex>
 #include <set>
 
 namespace icinga
@@ -36,6 +39,35 @@ struct ConfigDirInformation
 	Dictionary::Ptr UpdateV1;
 	Dictionary::Ptr UpdateV2;
 	Dictionary::Ptr Checksums;
+};
+
+/**
+ * If the version reported by icinga::Hello is not enough to tell whether
+ * the peer has a specific capability, add the latter to this bitmask.
+ *
+ * Note that due to the capability exchange via JSON-RPC and the state storage via JSON
+ * the bitmask numbers are stored in IEEE 754 64-bit floats.
+ * The latter have 53 digit bits which limit the bitmask.
+ * Not to run out of bits:
+ *
+ * Once all Icinga versions which don't have a specific capability are completely EOL,
+ * remove the respective capability checks and assume the peer has the capability.
+ * Once all Icinga versions which still check for the capability are completely EOL,
+ * remove the respective bit from icinga::Hello.
+ * Once all Icinga versions which still have the respective bit in icinga::Hello
+ * are completely EOL, remove the bit here.
+ * Once all Icinga versions which still have the respective bit here
+ * are completely EOL, feel free to re-use the bit.
+ *
+ * completely EOL = not supported, even if an important customer of us used it and
+ * not expected to appear in a multi-level cluster, e.g. a 4 level cluster with
+ * v2.11 -> v2.10 -> v2.9 -> v2.8 - v2.7 isn't here
+ *
+ * @ingroup remote
+ */
+enum class ApiCapabilities : uint_fast64_t
+{
+	ExecuteArbitraryCommand = 1u
 };
 
 /**
@@ -58,6 +90,7 @@ public:
 	static String GetCaDir();
 	static String GetCertificateRequestsDir();
 
+	std::shared_ptr<X509> RenewCert(const std::shared_ptr<X509>& cert);
 	void UpdateSSLContext();
 
 	static ApiListener::Ptr GetInstance();
@@ -85,6 +118,7 @@ public:
 
 	/* filesync */
 	static Value ConfigUpdateHandler(const MessageOrigin::Ptr& origin, const Dictionary::Ptr& params);
+	void HandleConfigUpdate(const MessageOrigin::Ptr& origin, const Dictionary::Ptr& params);
 
 	/* configsync */
 	static void ConfigUpdateObjectHandler(const ConfigObject::Ptr& object, const Value& cookie);
@@ -127,9 +161,10 @@ protected:
 
 private:
 	Shared<boost::asio::ssl::context>::Ptr m_SSLContext;
+	boost::shared_mutex m_SSLContextMutex;
 
-	mutable boost::mutex m_AnonymousClientsLock;
-	mutable boost::mutex m_HttpClientsLock;
+	mutable std::mutex m_AnonymousClientsLock;
+	mutable std::mutex m_HttpClientsLock;
 	std::set<JsonRpcConnection::Ptr> m_AnonymousClients;
 	std::set<HttpServerConnection::Ptr> m_HttpClients;
 
@@ -138,6 +173,7 @@ private:
 	Timer::Ptr m_AuthorityTimer;
 	Timer::Ptr m_CleanupCertificateRequestsTimer;
 	Timer::Ptr m_ApiPackageIntegrityTimer;
+	Timer::Ptr m_RenewOwnCertTimer;
 
 	Endpoint::Ptr m_LocalEndpoint;
 
@@ -160,12 +196,12 @@ private:
 		boost::asio::yield_context yc, const Shared<boost::asio::io_context::strand>::Ptr& strand,
 		const Shared<AsioTlsStream>::Ptr& client, const String& hostname, ConnectionRole role
 	);
-	void ListenerCoroutineProc(boost::asio::yield_context yc, const Shared<boost::asio::ip::tcp::acceptor>::Ptr& server, const Shared<boost::asio::ssl::context>::Ptr& sslContext);
+	void ListenerCoroutineProc(boost::asio::yield_context yc, const Shared<boost::asio::ip::tcp::acceptor>::Ptr& server);
 
 	WorkQueue m_RelayQueue;
 	WorkQueue m_SyncQueue{0, 4};
 
-	boost::mutex m_LogLock;
+	std::mutex m_LogLock;
 	Stream::Ptr m_LogFile;
 	size_t m_LogMessageCount{0};
 
@@ -185,10 +221,11 @@ private:
 	void RemoveStatusFile();
 
 	/* filesync */
-	static boost::mutex m_ConfigSyncStageLock;
+	static std::mutex m_ConfigSyncStageLock;
 
 	void SyncLocalZoneDirs() const;
 	void SyncLocalZoneDir(const Zone::Ptr& zone) const;
+	void RenewOwnCert();
 
 	void SendConfigUpdate(const JsonRpcConnection::Ptr& aclient);
 
@@ -197,9 +234,7 @@ private:
 	static ConfigDirInformation LoadConfigDir(const String& dir);
 	static void ConfigGlobHandler(ConfigDirInformation& config, const String& path, const String& file);
 
-	static void TryActivateZonesStageCallback(const ProcessResult& pr,
-		const std::vector<String>& relativePaths);
-	static void AsyncTryActivateZonesStage(const std::vector<String>& relativePaths);
+	static void TryActivateZonesStage(const std::vector<String>& relativePaths);
 
 	static String GetChecksum(const String& content);
 	static bool CheckConfigChange(const ConfigDirInformation& oldConfig, const ConfigDirInformation& newConfig);
@@ -217,7 +252,7 @@ private:
 	void SyncClient(const JsonRpcConnection::Ptr& aclient, const Endpoint::Ptr& endpoint, bool needSync);
 
 	/* API Config Packages */
-	mutable boost::mutex m_ActivePackageStagesLock;
+	mutable std::mutex m_ActivePackageStagesLock;
 	std::map<String, String> m_ActivePackageStages;
 
 	void UpdateActivePackageStagesCache();

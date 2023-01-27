@@ -186,7 +186,7 @@ bool EnsureValidHeaders(
 		} else {
 			response.set(http::field::content_type, "text/html");
 			response.body() = String("<h1>Bad Request</h1><p><pre>") + errorMsg + "</pre></p>";
-			response.set(http::field::content_length, response.body().size());
+			response.content_length(response.body().size());
 		}
 
 		response.set(http::field::connection, "close");
@@ -246,7 +246,7 @@ bool HandleAccessControl(
 			if (!allowedOrigins.empty()) {
 				auto& origin (request[http::field::origin]);
 
-				if (allowedOrigins.find(origin.to_string()) != allowedOrigins.end()) {
+				if (allowedOrigins.find(std::string(origin)) != allowedOrigins.end()) {
 					response.set(http::field::access_control_allow_origin, origin);
 				}
 
@@ -257,9 +257,9 @@ bool HandleAccessControl(
 				if (request.method() == http::verb::options && !request[http::field::access_control_request_method].empty()) {
 					response.result(http::status::ok);
 					response.set(http::field::access_control_allow_methods, "GET, POST, PUT, DELETE");
-					response.set(http::field::access_control_allow_headers, "Authorization, X-HTTP-Method-Override");
+					response.set(http::field::access_control_allow_headers, "Authorization, Content-Type, X-HTTP-Method-Override");
 					response.body() = "Preflight OK";
-					response.set(http::field::content_length, response.body().size());
+					response.content_length(response.body().size());
 					response.set(http::field::connection, "close");
 
 					boost::system::error_code ec;
@@ -290,7 +290,7 @@ bool EnsureAcceptHeader(
 		response.result(http::status::bad_request);
 		response.set(http::field::content_type, "text/html");
 		response.body() = "<h1>Accept header is missing or not set to 'application/json'.</h1>";
-		response.set(http::field::content_length, response.body().size());
+		response.content_length(response.body().size());
 		response.set(http::field::connection, "close");
 
 		boost::system::error_code ec;
@@ -331,7 +331,7 @@ bool EnsureAuthenticatedUser(
 		} else {
 			response.set(http::field::content_type, "text/html");
 			response.body() = "<h1>Unauthorized. Please check your user credentials.</h1>";
-			response.set(http::field::content_length, response.body().size());
+			response.content_length(response.body().size());
 		}
 
 		boost::system::error_code ec;
@@ -423,7 +423,7 @@ bool EnsureValidBody(
 		} else {
 			response.set(http::field::content_type, "text/html");
 			response.body() = String("<h1>Bad Request</h1><p><pre>") + ec.message() + "</pre></p>";
-			response.set(http::field::content_length, response.body().size());
+			response.content_length(response.body().size());
 		}
 
 		response.set(http::field::connection, "close");
@@ -536,15 +536,19 @@ void HttpServerConnection::ProcessMessages(boost::asio::yield_context yc)
 			if (!authenticatedUser) {
 				CpuBoundWork fetchingAuthenticatedUser (yc);
 
-				authenticatedUser = ApiUser::GetByAuthHeader(request[http::field::authorization].to_string());
+				authenticatedUser = ApiUser::GetByAuthHeader(std::string(request[http::field::authorization]));
 			}
 
-			Log(LogInformation, "HttpServerConnection")
-				<< "Request: " << request.method_string() << ' ' << request.target()
+			Log logMsg (LogInformation, "HttpServerConnection");
+
+			logMsg << "Request: " << request.method_string() << ' ' << request.target()
 				<< " (from " << m_PeerAddress
 				<< "), user: " << (authenticatedUser ? authenticatedUser->GetName() : "<unauthenticated>")
-				<< ", agent: " << request[http::field::user_agent] << ")."; //operator[] - Returns the value for a field, or "" if it does not exist.
+				<< ", agent: " << request[http::field::user_agent]; //operator[] - Returns the value for a field, or "" if it does not exist.
 
+			Defer addRespCode ([&response, &logMsg]() {
+				logMsg << ", status: " << response.result() << ").";
+			});
 
 			if (!HandleAccessControl(*m_Stream, request, response, yc)) {
 				break;

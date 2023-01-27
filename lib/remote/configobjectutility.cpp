@@ -8,11 +8,13 @@
 #include "base/configwriter.hpp"
 #include "base/exception.hpp"
 #include "base/dependencygraph.hpp"
+#include "base/tlsutility.hpp"
 #include "base/utility.hpp"
 #include <boost/algorithm/string/case_conv.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/system/error_code.hpp>
 #include <fstream>
+#include <utility>
 
 using namespace icinga;
 
@@ -27,16 +29,42 @@ String ConfigObjectUtility::GetConfigDir()
 	return prefix + activeStage;
 }
 
-String ConfigObjectUtility::GetObjectConfigPath(const Type::Ptr& type, const String& fullName)
+String ConfigObjectUtility::ComputeNewObjectConfigPath(const Type::Ptr& type, const String& fullName)
 {
 	String typeDir = type->GetPluralName();
 	boost::algorithm::to_lower(typeDir);
 
 	/* This may throw an exception the caller above must handle. */
-	String prefix = GetConfigDir();
+	String prefix = GetConfigDir() + "/conf.d/" + type->GetPluralName().ToLower() + "/";
 
-	return prefix + "/conf.d/" + typeDir +
-		"/" + EscapeName(fullName) + ".conf";
+	String escapedName = EscapeName(fullName);
+
+	String longPath = prefix + escapedName + ".conf";
+
+	/*
+	 * The long path may cause trouble due to exceeding the allowed filename length of the filesystem. Therefore, the
+	 * preferred solution would be to use the truncated and hashed version as returned at the end of this function.
+	 * However, for compatibility reasons, we have to keep the old long version in some cases. Notably, this could lead
+	 * to the creation of objects that can't be synced to child nodes if they are running an older version. Thus, for
+	 * now, the fix is only enabled for comments and downtimes, as these are the object types for which the issue is
+	 * most likely triggered but can't be worked around easily (you'd have to rename the host and/or service in order to
+	 * be able to schedule a downtime or add an acknowledgement, which is not feasible) and the impact of not syncing
+	 * these objects through the whole cluster is limited. For other object types, we currently prefer to fail the
+	 * creation early so that configuration inconsistencies throughout the cluster are avoided.
+	 *
+	 * TODO: Remove this in v2.16 and truncate all.
+	 */
+	if (type->GetName() != "Comment" && type->GetName() != "Downtime") {
+		return longPath;
+	}
+
+	/* Maximum length 80 bytes object name + 3 bytes "..." + 40 bytes SHA1 (hex-encoded) */
+	return prefix + Utility::TruncateUsingHash<80+3+40>(escapedName) + ".conf";
+}
+
+String ConfigObjectUtility::GetExistingObjectConfigPath(const ConfigObject::Ptr& object)
+{
+	return object->GetDebugInfo().Path;
 }
 
 void ConfigObjectUtility::RepairPackage(const String& package)
@@ -79,7 +107,7 @@ void ConfigObjectUtility::RepairPackage(const String& package)
 
 void ConfigObjectUtility::CreateStorage()
 {
-	boost::mutex::scoped_lock lock(ConfigPackageUtility::GetStaticPackageMutex());
+	std::unique_lock<std::mutex> lock(ConfigPackageUtility::GetStaticPackageMutex());
 
 	/* For now, we only use _api as our creation target. */
 	String package = "_api";
@@ -152,17 +180,19 @@ bool ConfigObjectUtility::CreateObject(const Type::Ptr& type, const String& full
 {
 	CreateStorage();
 
-	ConfigItem::Ptr item = ConfigItem::GetByTypeAndName(type, fullName);
+	{
+		auto configType (dynamic_cast<ConfigType*>(type.get()));
 
-	if (item) {
-		errors->Add("Object '" + fullName + "' already exists.");
-		return false;
+		if (configType && configType->GetObject(fullName)) {
+			errors->Add("Object '" + fullName + "' already exists.");
+			return false;
+		}
 	}
 
 	String path;
 
 	try {
-		path = GetObjectConfigPath(type, fullName);
+		path = ComputeNewObjectConfigPath(type, fullName);
 	} catch (const std::exception& ex) {
 		errors->Add("Config package broken: " + DiagnosticInformation(ex, false));
 		return false;
@@ -195,7 +225,7 @@ bool ConfigObjectUtility::CreateObject(const Type::Ptr& type, const String& full
 		if (!ConfigItem::CommitItems(ascope.GetContext(), upq, newItems, true)) {
 			if (errors) {
 				Log(LogNotice, "ConfigObjectUtility")
-					<< "Failed to commit config item '" << fullName << "'. Aborting and emoving config path '" << path << "'.";
+					<< "Failed to commit config item '" << fullName << "'. Aborting and removing config path '" << path << "'.";
 
 				Utility::Remove(path);
 
@@ -215,10 +245,10 @@ bool ConfigObjectUtility::CreateObject(const Type::Ptr& type, const String& full
 		 * uq, items, runtimeCreated, silent, withModAttrs, cookie
 		 * IMPORTANT: Forward the cookie aka origin in order to prevent sync loops in the same zone!
 		 */
-		if (!ConfigItem::ActivateItems(upq, newItems, true, true, false, cookie)) {
+		if (!ConfigItem::ActivateItems(newItems, true, false, false, cookie)) {
 			if (errors) {
 				Log(LogNotice, "ConfigObjectUtility")
-					<< "Failed to activate config object '" << fullName << "'. Aborting and emoving config path '" << path << "'.";
+					<< "Failed to activate config object '" << fullName << "'. Aborting and removing config path '" << path << "'.";
 
 				Utility::Remove(path);
 
@@ -323,16 +353,9 @@ bool ConfigObjectUtility::DeleteObjectHelper(const ConfigObject::Ptr& object, bo
 		return false;
 	}
 
-	String path;
-
-	try {
-		path = GetObjectConfigPath(object->GetReflectionType(), name);
-	} catch (const std::exception& ex) {
-		errors->Add("Config package broken: " + DiagnosticInformation(ex, false));
-		return false;
+	if (object->GetPackage() == "_api") {
+		Utility::Remove(GetExistingObjectConfigPath(object));
 	}
-
-	Utility::Remove(path);
 
 	Log(LogInformation, "ConfigObjectUtility")
 		<< "Deleted object '" << name << "' of type '" << type->GetName() << "'.";

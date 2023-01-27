@@ -204,8 +204,8 @@ Operator | Precedence | Examples (Result)                             | Descript
 `&`        | 9          | 7 & 3 (3)                                     | Binary AND
 `^`        | 10          | 17 ^ 12 (29)                                  | Bitwise XOR
 <code>&#124;</code>    | 11          | 2 &#124; 3 (3)                                | Binary OR
-<code>&#124;&#124;</code>  | 12     | true &#124;&#124; false (true), 0 &#124;&#124; 7 (7)| Logical OR
-`&&`       | 13         | true && false (false), 3 && 7 (7), 0 && 7 (0) | Logical AND
+`&&`       | 12         | true && false (false), 3 && 7 (7), 0 && 7 (0) | Logical AND
+<code>&#124;&#124;</code>  | 13     | true &#124;&#124; false (true), 0 &#124;&#124; 7 (7)| Logical OR
 `=`        | 14         | a = 3                                         | Assignment
 `=>`       | 15         | x => x * x (function with arg x)              | Lambda, for loop
 `?`        | 16         | (2 * 3 > 5) ? 1 : 0 (1)                       | [Ternary operator](17-language-reference.md#conditional-statements-ternary)
@@ -504,7 +504,7 @@ Environment         |**Read-write.** The name of the Icinga environment. Include
 RunAsUser           |**Read-write.** Defines the user the Icinga 2 daemon is running as. Set in the Icinga 2 sysconfig.
 RunAsGroup          |**Read-write.** Defines the group the Icinga 2 daemon is running as. Set in the Icinga 2 sysconfig.
 MaxConcurrentChecks |**Read-write.** The number of max checks run simultaneously. Defaults to `512`.
-ApiBindHost         |**Read-write.** Overrides the default value for the ApiListener `bind_host` attribute. Not set by default.
+ApiBindHost         |**Read-write.** Overrides the default value for the ApiListener `bind_host` attribute. Defaults to `::` if IPv6 is supported by the operating system and to `0.0.0.0` otherwise.
 ApiBindPort         |**Read-write.** Overrides the default value for the ApiListener `bind_port` attribute. Not set by default.
 
 #### Application Runtime Constants <a id="icinga-constants-application-runtime"></a>

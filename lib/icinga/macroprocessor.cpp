@@ -15,6 +15,8 @@
 
 using namespace icinga;
 
+thread_local Dictionary::Ptr MacroResolver::OverrideMacros;
+
 Value MacroProcessor::ResolveMacros(const Value& str, const ResolverList& resolvers,
 	const CheckResult::Ptr& cr, String *missingMacro,
 	const MacroProcessor::EscapeCallback& escapeFn, const Dictionary::Ptr& resolvedMacros,
@@ -74,7 +76,7 @@ Value MacroProcessor::ResolveMacros(const Value& str, const ResolverList& resolv
 bool MacroProcessor::ResolveMacro(const String& macro, const ResolverList& resolvers,
 	const CheckResult::Ptr& cr, Value *result, bool *recursive_macro)
 {
-	CONTEXT("Resolving macro '" + macro + "'");
+	CONTEXT("Resolving macro '" << macro << "'");
 
 	*recursive_macro = false;
 
@@ -203,7 +205,7 @@ Value MacroProcessor::InternalResolveMacros(const String& str, const ResolverLis
 	const MacroProcessor::EscapeCallback& escapeFn, const Dictionary::Ptr& resolvedMacros,
 	bool useResolvedMacros, int recursionLevel)
 {
-	CONTEXT("Resolving macros for string '" + str + "'");
+	CONTEXT("Resolving macros for string '" << str << "'");
 
 	if (recursionLevel > 15)
 		BOOST_THROW_EXCEPTION(std::runtime_error("Infinite recursion detected while resolving macros"));
@@ -374,13 +376,17 @@ void MacroProcessor::ValidateCustomVars(const ConfigObject::Ptr& object, const D
 }
 
 void MacroProcessor::AddArgumentHelper(const Array::Ptr& args, const String& key, const String& value,
-	bool add_key, bool add_value)
+	bool add_key, bool add_value, const Value& separator)
 {
-	if (add_key)
-		args->Add(key);
+	if (add_key && separator.GetType() != ValueEmpty && add_value) {
+		args->Add(key + separator + value);
+	} else {
+		if (add_key)
+			args->Add(key);
 
-	if (add_value)
-		args->Add(value);
+		if (add_value)
+			args->Add(value);
+	}
 }
 
 Value MacroProcessor::EscapeMacroShellArg(const Value& value)
@@ -410,6 +416,7 @@ struct CommandArgument
 	bool RepeatKey{true};
 	bool SkipValue{false};
 	String Key;
+	Value Separator;
 	Value AValue;
 
 	bool operator<(const CommandArgument& rhs) const
@@ -457,6 +464,7 @@ Value MacroProcessor::ResolveArguments(const Value& command, const Dictionary::P
 				if (argdict->Contains("repeat_key"))
 					arg.RepeatKey = argdict->Get("repeat_key");
 				arg.Order = argdict->Get("order");
+				arg.Separator = argdict->Get("separator");
 
 				Value set_if = argdict->Get("set_if");
 
@@ -511,8 +519,6 @@ Value MacroProcessor::ResolveArguments(const Value& command, const Dictionary::P
 				continue;
 			}
 
-			arg.SkipValue = arg.SkipValue || arg.AValue.GetType() == ValueEmpty;
-
 			args.emplace_back(std::move(arg));
 		}
 
@@ -539,10 +545,10 @@ Value MacroProcessor::ResolveArguments(const Value& command, const Dictionary::P
 					} else
 						add_key = !arg.SkipKey && arg.RepeatKey;
 
-					AddArgumentHelper(command_arr, arg.Key, value, add_key, !arg.SkipValue);
+					AddArgumentHelper(command_arr, arg.Key, value, add_key, !arg.SkipValue, arg.Separator);
 				}
 			} else
-				AddArgumentHelper(command_arr, arg.Key, arg.AValue, !arg.SkipKey, !arg.SkipValue);
+				AddArgumentHelper(command_arr, arg.Key, arg.AValue, !arg.SkipKey, !arg.SkipValue, arg.Separator);
 		}
 	}
 

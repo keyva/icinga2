@@ -22,7 +22,7 @@ bool HostGroup::EvaluateObjectRule(const Host::Ptr& host, const ConfigItem::Ptr&
 {
 	String groupName = group->GetName();
 
-	CONTEXT("Evaluating rule for group '" + groupName + "'");
+	CONTEXT("Evaluating rule for group '" << groupName << "'");
 
 	ScriptFrame frame(true);
 	if (group->GetScope())
@@ -45,7 +45,7 @@ bool HostGroup::EvaluateObjectRule(const Host::Ptr& host, const ConfigItem::Ptr&
 
 void HostGroup::EvaluateObjectRules(const Host::Ptr& host)
 {
-	CONTEXT("Evaluating group memberships for host '" + host->GetName() + "'");
+	CONTEXT("Evaluating group memberships for host '" << host->GetName() << "'");
 
 	for (const ConfigItem::Ptr& group : ConfigItem::GetItems(HostGroup::TypeInstance))
 	{
@@ -58,7 +58,7 @@ void HostGroup::EvaluateObjectRules(const Host::Ptr& host)
 
 std::set<Host::Ptr> HostGroup::GetMembers() const
 {
-	boost::mutex::scoped_lock lock(m_HostGroupMutex);
+	std::unique_lock<std::mutex> lock(m_HostGroupMutex);
 	return m_Members;
 }
 
@@ -66,13 +66,13 @@ void HostGroup::AddMember(const Host::Ptr& host)
 {
 	host->AddGroup(GetName());
 
-	boost::mutex::scoped_lock lock(m_HostGroupMutex);
+	std::unique_lock<std::mutex> lock(m_HostGroupMutex);
 	m_Members.insert(host);
 }
 
 void HostGroup::RemoveMember(const Host::Ptr& host)
 {
-	boost::mutex::scoped_lock lock(m_HostGroupMutex);
+	std::unique_lock<std::mutex> lock(m_HostGroupMutex);
 	m_Members.erase(host);
 }
 

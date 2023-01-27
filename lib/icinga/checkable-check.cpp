@@ -25,9 +25,9 @@ boost::signals2::signal<void (const Checkable::Ptr&)> Checkable::OnNextCheckUpda
 
 Atomic<uint_fast64_t> Checkable::CurrentConcurrentChecks (0);
 
-boost::mutex Checkable::m_StatsMutex;
+std::mutex Checkable::m_StatsMutex;
 int Checkable::m_PendingChecks = 0;
-boost::condition_variable Checkable::m_PendingChecksCV;
+std::condition_variable Checkable::m_PendingChecksCV;
 
 CheckCommand::Ptr Checkable::GetCheckCommand() const
 {
@@ -94,15 +94,17 @@ double Checkable::GetLastCheck() const
 	return schedule_end;
 }
 
-void Checkable::ProcessCheckResult(const CheckResult::Ptr& cr, const MessageOrigin::Ptr& origin)
+Checkable::ProcessingResult Checkable::ProcessCheckResult(const CheckResult::Ptr& cr, const MessageOrigin::Ptr& origin)
 {
+	using Result = Checkable::ProcessingResult;
+
 	{
 		ObjectLock olock(this);
 		m_CheckRunning = false;
 	}
 
 	if (!cr)
-		return;
+		return Result::NoCheckResult;
 
 	double now = Utility::GetTime();
 
@@ -119,13 +121,18 @@ void Checkable::ProcessCheckResult(const CheckResult::Ptr& cr, const MessageOrig
 		cr->SetExecutionEnd(now);
 
 	if (!origin || origin->IsLocal())
-		cr->SetCheckSource(IcingaApplication::GetInstance()->GetNodeName());
+		cr->SetSchedulingSource(IcingaApplication::GetInstance()->GetNodeName());
 
 	Endpoint::Ptr command_endpoint = GetCommandEndpoint();
 
-	/* override check source if command_endpoint was defined */
-	if (command_endpoint && !GetExtension("agent_check"))
-		cr->SetCheckSource(command_endpoint->GetName());
+	if (cr->GetCheckSource().IsEmpty()) {
+		if ((!origin || origin->IsLocal()))
+			cr->SetCheckSource(IcingaApplication::GetInstance()->GetNodeName());
+
+		/* override check source if command_endpoint was defined */
+		if (command_endpoint && !GetExtension("agent_check"))
+			cr->SetCheckSource(command_endpoint->GetName());
+	}
 
 	/* agent checks go through the api */
 	if (command_endpoint && GetExtension("agent_check")) {
@@ -137,12 +144,12 @@ void Checkable::ProcessCheckResult(const CheckResult::Ptr& cr, const MessageOrig
 			listener->SyncSendMessage(command_endpoint, message);
 		}
 
-		return;
+		return Result::Ok;
 
 	}
 
 	if (!IsActive())
-		return;
+		return Result::CheckableInactive;
 
 	bool reachable = IsReachable();
 	bool notification_reachable = IsReachable(DependencyNotification);
@@ -179,7 +186,7 @@ void Checkable::ProcessCheckResult(const CheckResult::Ptr& cr, const MessageOrig
 					<< Utility::FormatDateTime("%Y-%m-%d %H:%M:%S %z", newCRTimestamp) << " (" << newCRTimestamp
 					<< "). It is in the past compared to ours at "
 					<< Utility::FormatDateTime("%Y-%m-%d %H:%M:%S %z", currentCRTimestamp) << " (" << currentCRTimestamp << ").";
-				return;
+				return Result::NewerCheckResultPresent;
 			}
 		}
 	}
@@ -209,11 +216,7 @@ void Checkable::ProcessCheckResult(const CheckResult::Ptr& cr, const MessageOrig
 			recovery = true;
 
 		ResetNotificationNumbers();
-		SaveLastState(ServiceOK, Utility::GetTime());
-
-		/* update reachability for child objects in OK state */
-		if (!children.empty())
-			OnReachabilityChanged(this, cr, children, origin);
+		SaveLastState(ServiceOK, cr->GetExecutionEnd());
 	} else {
 		/* OK -> NOT-OK change, first SOFT state. Reset attempt counter. */
 		if (IsStateOK(old_state)) {
@@ -234,34 +237,17 @@ void Checkable::ProcessCheckResult(const CheckResult::Ptr& cr, const MessageOrig
 		}
 
 		if (!IsStateOK(cr->GetState())) {
-			SaveLastState(cr->GetState(), Utility::GetTime());
+			SaveLastState(cr->GetState(), cr->GetExecutionEnd());
 		}
-
-		/* update reachability for child objects in NOT-OK state */
-		if (!children.empty())
-			OnReachabilityChanged(this, cr, children, origin);
 	}
 
 	if (!reachable)
-		SetLastStateUnreachable(Utility::GetTime());
+		SetLastStateUnreachable(cr->GetExecutionEnd());
 
 	SetCheckAttempt(attempt);
 
 	ServiceState new_state = cr->GetState();
-
-	if (service) {
-		SetStateRaw(new_state);
-	} else {
-		bool wasProblem = GetProblem();
-
-		SetStateRaw(new_state);
-
-		if (GetProblem() != wasProblem) {
-			for (auto& service : host->GetServices()) {
-				Service::OnHostProblemChanged(service, cr, origin);
-			}
-		}
-	}
+	SetStateRaw(new_state);
 
 	bool stateChange;
 
@@ -275,26 +261,12 @@ void Checkable::ProcessCheckResult(const CheckResult::Ptr& cr, const MessageOrig
 	SetPreviousStateChange(GetLastStateChange());
 
 	if (stateChange) {
-		SetLastStateChange(now);
+		SetLastStateChange(cr->GetExecutionEnd());
 
 		/* remove acknowledgements */
 		if (GetAcknowledgement() == AcknowledgementNormal ||
 			(GetAcknowledgement() == AcknowledgementSticky && IsStateOK(new_state))) {
 			ClearAcknowledgement("");
-		}
-
-		/* reschedule direct parents */
-		for (const Checkable::Ptr& parent : GetParents()) {
-			if (parent.get() == this)
-				continue;
-
-			if (!parent->GetEnableActiveChecks())
-				continue;
-
-			if (parent->GetNextCheck() >= now + parent->GetRetryInterval()) {
-				ObjectLock olock(parent);
-				parent->SetNextCheck(now);
-			}
 		}
 	}
 
@@ -312,7 +284,7 @@ void Checkable::ProcessCheckResult(const CheckResult::Ptr& cr, const MessageOrig
 
 	if (hardChange || is_volatile) {
 		SetLastHardStateRaw(new_state);
-		SetLastHardStateChange(now);
+		SetLastHardStateChange(cr->GetExecutionEnd());
 		SetLastHardStatesRaw(GetLastHardStatesRaw() / 100u + new_state * 100u);
 	}
 
@@ -320,8 +292,10 @@ void Checkable::ProcessCheckResult(const CheckResult::Ptr& cr, const MessageOrig
 		SetLastSoftStatesRaw(GetLastSoftStatesRaw() / 100u + new_state * 100u);
 	}
 
+	cr->SetPreviousHardState(ServiceState(GetLastHardStatesRaw() % 100u));
+
 	if (!IsStateOK(new_state))
-		TriggerDowntimes();
+		TriggerDowntimes(cr->GetExecutionEnd());
 
 	/* statistics for external tools */
 	Checkable::UpdateStatistics(cr, checkableType);
@@ -362,11 +336,27 @@ void Checkable::ProcessCheckResult(const CheckResult::Ptr& cr, const MessageOrig
 	cr->SetVarsAfter(vars_after);
 
 	olock.Lock();
-	SetLastCheckResult(cr);
+
+	if (service) {
+		SetLastCheckResult(cr);
+	} else {
+		bool wasProblem = GetProblem();
+
+		SetLastCheckResult(cr);
+
+		if (GetProblem() != wasProblem) {
+			auto services = host->GetServices();
+			olock.Unlock();
+			for (auto& service : services) {
+				Service::OnHostProblemChanged(service, cr, origin);
+			}
+			olock.Lock();
+		}
+	}
 
 	bool was_flapping = IsFlapping();
 
-	UpdateFlappingStatus(old_state != cr->GetState());
+	UpdateFlappingStatus(cr->GetState());
 
 	bool is_flapping = IsFlapping();
 
@@ -398,6 +388,36 @@ void Checkable::ProcessCheckResult(const CheckResult::Ptr& cr, const MessageOrig
 		<< " threshold high: " << GetFlappingThresholdHigh()
 		<< "% current: " << GetFlappingCurrent() << "%.";
 #endif /* I2_DEBUG */
+
+	if (recovery) {
+		for (auto& child : children) {
+			if (child->GetProblem() && child->GetEnableActiveChecks()) {
+				auto nextCheck (now + Utility::Random() % 60);
+
+				ObjectLock oLock (child);
+
+				if (nextCheck < child->GetNextCheck()) {
+					child->SetNextCheck(nextCheck);
+				}
+			}
+		}
+	}
+
+	if (stateChange) {
+		/* reschedule direct parents */
+		for (const Checkable::Ptr& parent : GetParents()) {
+			if (parent.get() == this)
+				continue;
+
+			if (!parent->GetEnableActiveChecks())
+				continue;
+
+			if (parent->GetNextCheck() >= now + parent->GetRetryInterval()) {
+				ObjectLock olock(parent);
+				parent->SetNextCheck(now);
+			}
+		}
+	}
 
 	OnNewCheckResult(this, cr, origin);
 
@@ -461,7 +481,12 @@ void Checkable::ProcessCheckResult(const CheckResult::Ptr& cr, const MessageOrig
 
 	if (send_notification && !is_flapping) {
 		if (!IsPaused()) {
-			if (suppress_notification) {
+			/* If there are still some pending suppressed state notification, keep the suppression until these are
+			 * handled by Checkable::FireSuppressedNotifications().
+			 */
+			bool pending = GetSuppressedNotifications() & (NotificationRecovery|NotificationProblem);
+
+			if (suppress_notification || pending) {
 				suppressed_types |= (recovery ? NotificationRecovery : NotificationProblem);
 			} else {
 				OnNotificationsRequested(this, recovery ? NotificationRecovery : NotificationProblem, cr, "", "", nullptr);
@@ -478,23 +503,38 @@ void Checkable::ProcessCheckResult(const CheckResult::Ptr& cr, const MessageOrig
 		int suppressed_types_before (GetSuppressedNotifications());
 		int suppressed_types_after (suppressed_types_before | suppressed_types);
 
-		for (int conflict : {NotificationProblem | NotificationRecovery, NotificationFlappingStart | NotificationFlappingEnd}) {
-			/* E.g. problem and recovery notifications neutralize each other. */
+		const int conflict = NotificationFlappingStart | NotificationFlappingEnd;
+		if ((suppressed_types_after & conflict) == conflict) {
+			/* Flapping start and end cancel out each other. */
+			suppressed_types_after &= ~conflict;
+		}
 
-			if ((suppressed_types_after & conflict) == conflict) {
-				suppressed_types_after &= ~conflict;
-			}
+		const int stateNotifications = NotificationRecovery | NotificationProblem;
+		if (!(suppressed_types_before & stateNotifications) && (suppressed_types & stateNotifications)) {
+			/* A state-related notification is suppressed for the first time, store the previous state. When
+			 * notifications are no longer suppressed, this can be compared with the current state to determine
+			 * if a notification must be sent. This is done differently compared to flapping notifications just above
+			 * as for state notifications, problem and recovery don't always cancel each other. For example,
+			 * WARNING -> OK -> CRITICAL generates both types once, but there should still be a notification.
+			 */
+			SetStateBeforeSuppression(old_stateType == StateTypeHard ? old_state : ServiceOK);
 		}
 
 		if (suppressed_types_after != suppressed_types_before) {
 			SetSuppressedNotifications(suppressed_types_after);
 		}
 	}
+
+	/* update reachability for child objects */
+	if ((stateChange || hardChange) && !children.empty())
+		OnReachabilityChanged(this, cr, children, origin);
+
+	return Result::Ok;
 }
 
 void Checkable::ExecuteRemoteCheck(const Dictionary::Ptr& resolvedMacros)
 {
-	CONTEXT("Executing remote check for object '" + GetName() + "'");
+	CONTEXT("Executing remote check for object '" << GetName() << "'");
 
 	double scheduled_start = GetNextCheck();
 	double before_check = Utility::GetTime();
@@ -508,11 +548,13 @@ void Checkable::ExecuteRemoteCheck(const Dictionary::Ptr& resolvedMacros)
 
 void Checkable::ExecuteCheck()
 {
-	CONTEXT("Executing check for object '" + GetName() + "'");
+	CONTEXT("Executing check for object '" << GetName() << "'");
 
 	/* keep track of scheduling info in case the check type doesn't provide its own information */
 	double scheduled_start = GetNextCheck();
 	double before_check = Utility::GetTime();
+
+	SetLastCheckStarted(Utility::GetTime());
 
 	/* This calls SetNextCheck() which updates the CheckerComponent's idle/pending
 	 * queues and ensures that checks are not fired multiple times. ProcessCheckResult()
@@ -569,6 +611,13 @@ void Checkable::ExecuteCheck()
 			if (service)
 				params->Set("service", service->GetShortName());
 
+			/*
+			 * If the host/service object specifies the 'check_timeout' attribute,
+			 * forward this to the remote endpoint to limit the command execution time.
+			 */
+			if (!GetCheckTimeout().IsEmpty())
+				params->Set("check_timeout", GetCheckTimeout());
+
 			params->Set("macros", macros);
 
 			ApiListener::Ptr listener = ApiListener::GetInstance();
@@ -581,6 +630,12 @@ void Checkable::ExecuteCheck()
 			 * using the proper check interval once we've received a check result.
 			 */
 			SetNextCheck(Utility::GetTime() + GetCheckCommand()->GetTimeout() + 30);
+
+		/*
+		 * Let the user know that there was a problem with the check if
+		 * 1) The endpoint is not syncing (replay log, etc.)
+		 * 2) Outside of the cold startup window (5min)
+		 */
 		} else if (!endpoint->GetSyncing() && Application::GetInstance()->GetStartTime() < Utility::GetTime() - 300) {
 			/* fail to perform check on unconnected endpoint */
 			cr->SetState(ServiceUnknown);
@@ -627,26 +682,26 @@ void Checkable::UpdateStatistics(const CheckResult::Ptr& cr, CheckableType type)
 
 void Checkable::IncreasePendingChecks()
 {
-	boost::mutex::scoped_lock lock(m_StatsMutex);
+	std::unique_lock<std::mutex> lock(m_StatsMutex);
 	m_PendingChecks++;
 }
 
 void Checkable::DecreasePendingChecks()
 {
-	boost::mutex::scoped_lock lock(m_StatsMutex);
+	std::unique_lock<std::mutex> lock(m_StatsMutex);
 	m_PendingChecks--;
 	m_PendingChecksCV.notify_one();
 }
 
 int Checkable::GetPendingChecks()
 {
-	boost::mutex::scoped_lock lock(m_StatsMutex);
+	std::unique_lock<std::mutex> lock(m_StatsMutex);
 	return m_PendingChecks;
 }
 
 void Checkable::AquirePendingCheckSlot(int maxPendingChecks)
 {
-	boost::mutex::scoped_lock lock(m_StatsMutex);
+	std::unique_lock<std::mutex> lock(m_StatsMutex);
 	while (m_PendingChecks >= maxPendingChecks)
 		m_PendingChecksCV.wait(lock);
 
